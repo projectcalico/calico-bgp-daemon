@@ -1,0 +1,20 @@
+package: .
+import:
+- package: github.com/Sirupsen/logrus
+- package: github.com/coreos/etcd
+  version: ~3.1.0-alpha.1
+  subpackages:
+  - client
+  - pkg/transport
+- package: github.com/osrg/gobgp
+  version: ^1.12.0
+  subpackages:
+  - api
+  - config
+  - packet/bgp
+  - server
+  - table
+- package: github.com/vishvananda/netlink
+- package: golang.org/x/net
+  subpackages:
+  - context
