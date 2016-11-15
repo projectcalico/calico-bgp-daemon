@@ -3,8 +3,8 @@ gobgp:
 	sh -c 'go get github.com/osrg/gobgp/gobgp && cp /go/bin/gobgp /code && chown $(shell id -u):$(shell id -g) /code/gobgp'
 
 vendor:
-	docker run --rm -v ${PWD}:/go/src/github.com/projectcalico/calico-bgp-daemon:rw \
-        dockerepo/glide /bin/bash -c ' \
+	docker run --rm -v ${PWD}:/go/src/github.com/projectcalico/calico-bgp-daemon:rw --entrypoint=sh \
+        dockerepo/glide -c ' \
 	cd /go/src/github.com/projectcalico/calico-bgp-daemon; \
 	glide install -strip-vcs -strip-vendor --cache; \
 	chown $(shell id -u):$(shell id -u) -R vendor'

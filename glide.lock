@@ -1,17 +1,17 @@
-hash: 2eecbe3e99cd78a9550007215577456b5ee6f6fc438e442588774b5ba2e8c69a
-updated: 2016-10-14T20:07:13.449033842Z
+hash: d8a158fac3a1dd2e018e2a0da1e67654dc2d92d276a472c565d91d0f8bb162ec
+updated: 2016-11-15T04:40:18.997730454Z
 imports:
 - name: github.com/armon/go-radix
   version: 4239b77079c7b5d1243b7b4736304ce8ddb6f0f2
 - name: github.com/coreos/etcd
-  version: 2469a9568548b3f8abc22f5a2462c3443823334a
+  version: 83347907774bf36cbb261c594a32fd7b0f5dd9f6
   subpackages:
   - client
-  - pkg/fileutil
-  - pkg/pathutil
-  - pkg/tlsutil
   - pkg/transport
+  - pkg/pathutil
   - pkg/types
+  - pkg/fileutil
+  - pkg/tlsutil
 - name: github.com/coreos/go-systemd
   version: bfdc81d0d7e0fb19447b08571f63b774495251ce
   subpackages:
@@ -27,64 +27,57 @@ imports:
 - name: github.com/eapache/queue
   version: 44cc805cf13205b55f69e14bcb69867d1ae92f98
 - name: github.com/fsnotify/fsnotify
-  version: bd2828f9f176e52d7222e565abb2d338d3f3c103
+  version: fd9ec7deca8bf46ecd2a795baaacf2b3a9be1197
 - name: github.com/golang/protobuf
   version: 8616e8ee5e20a1704615e6c8d7afcdac06087a67
   subpackages:
   - jsonpb
   - proto
 - name: github.com/hashicorp/hcl
-  version: 6f5bfed9a0a22222fbe4e731ae3481730ba41e93
+  version: c3e054bfd4dcf77b9965ed2b79b22afa2f41d4eb
   subpackages:
   - hcl/ast
   - hcl/parser
-  - hcl/scanner
-  - hcl/strconv
   - hcl/token
   - json/parser
+  - hcl/scanner
+  - hcl/strconv
   - json/scanner
   - json/token
 - name: github.com/influxdata/influxdb
-  version: b66374eb1f748065f7c5fdd28e11058a42cdbc6d
+  version: 77e2c80a4f220770a2da00bc1ff048c762f8cc66
   subpackages:
   - client/v2
   - models
   - pkg/escape
-- name: github.com/kr/fs
-  version: 2788f0dbd16903de03cb8186e5c7d97b69ad387b
 - name: github.com/magiconair/properties
   version: 0723e352fa358f9322c938cc2dadda874e9151a9
 - name: github.com/mitchellh/mapstructure
-  version: a6ef2f080c66d0a2e94e97cf74f80f772855da63
+  version: f3009df150dadf309fdee4a54ed65c124afad715
 - name: github.com/osrg/gobgp
-  version: bccb1c0c23ab57d9b94db3d07872ebb6c340f473
+  version: ee8ce99e2df1f732ef515e20fb3054c0cff0249b
   subpackages:
   - api
   - config
   - packet/bgp
-  - packet/bmp
-  - packet/mrt
-  - packet/rtr
   - server
   - table
+  - packet/bmp
+  - packet/rtr
+  - packet/mrt
   - zebra
 - name: github.com/pelletier/go-buffruneio
   version: df1e16fde7fc330a0ca68167c23bf7ed6ac31d6d
 - name: github.com/pelletier/go-toml
   version: 45932ad32dfdd20826f5671da37a5f3ce9f26a8d
-- name: github.com/pkg/errors
-  version: 839d9e913e063e28dfd0e6c7b7512793e0a48be9
-- name: github.com/pkg/sftp
-  version: 4d0e916071f68db74f8a73926335f809396d6b42
 - name: github.com/satori/go.uuid
   version: b061729afc07e77a8aa4fad0a2fd840958f1942a
 - name: github.com/Sirupsen/logrus
-  version: 3ec0642a7fb6488f65b06f9040adc67e3990296a
+  version: abc6f20dabf4b10195f233ad21ea6c5ba33acae0
 - name: github.com/spf13/afero
-  version: 52e4a6cfac46163658bd4f123c49b6ee7dc75f78
+  version: 06b7e5f50606ecd49148a01a6008942d9b669217
   subpackages:
   - mem
-  - sftp
 - name: github.com/spf13/cast
   version: 2580bc98dc0e62908119e4737030cc2fdfc45e4c
 - name: github.com/spf13/jwalterweatherman
@@ -92,42 +85,36 @@ imports:
 - name: github.com/spf13/pflag
   version: 08b1a584251b5b62f458943640fc8ebd4d50aaa5
 - name: github.com/spf13/viper
-  version: 50515b700e02658272117a72bd641b6b7f1222e5
+  version: 651d9d916abc3c3d6a91a12549495caba5edffd2
 - name: github.com/ugorji/go
   version: f1f1a805ed361a0e078bb537e4ea78cd37dcf065
   subpackages:
   - codec
 - name: github.com/vishvananda/netlink
-  version: da7420cab5e209195f5f7387fccd4c7f48758d30
+  version: ffec63e1f1d04e356402671aff3f8da58b5dc585
   subpackages:
   - nl
 - name: github.com/vishvananda/netns
   version: 8ba1072b58e0c2a240eb5f6120165c7776c3e7b8
-- name: golang.org/x/crypto
-  version: 1351f936d976c60a0a48d728281922cf63eafb8d
-  subpackages:
-  - bcrypt
-  - blowfish
-  - ssh
 - name: golang.org/x/net
   version: 6acef71eb69611914f7a30939ea9f6e194c78172
   subpackages:
   - context
   - http2
+  - trace
   - http2/hpack
   - internal/timeseries
-  - trace
 - name: golang.org/x/sys
-  version: 9c60d1c508f5134d1ca726b4641db998f2523357
+  version: b699b7032584f0953262cb2788a0ca19bb494703
   subpackages:
   - unix
 - name: golang.org/x/text
-  version: c745997bb18563e8788428768ce0f034f2b663df
+  version: a263ba8db058568bb9beba166777d9c9dbe75d68
   subpackages:
   - transform
   - unicode/norm
 - name: google.golang.org/grpc
-  version: 231b4cfea0e79843053a33f5fe90bd4d84b23cd3
+  version: 0d9891286aca15aeb2b0a73be9f5946c3cfefa85
   subpackages:
   - codes
   - credentials
@@ -135,10 +122,12 @@ imports:
   - internal
   - metadata
   - naming
-  - peer
+  - stats
+  - tap
   - transport
+  - peer
 - name: gopkg.in/tomb.v2
-  version: 14b3d72120e8d10ea6e6b7f87f7175734b1faab8
+  version: 9dde971544235898fc9720ed594059f79fd3273c
 - name: gopkg.in/yaml.v2
   version: 53feefa2559fb8dfa8d81baad31be332c97d6c77
 testImports: []
