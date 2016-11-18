@@ -7,7 +7,7 @@ import:
   - client
   - pkg/transport
 - package: github.com/osrg/gobgp
-  version: ^1.12.0
+  version: ee8ce99e2df1f732ef515e20fb3054c0cff0249b
   subpackages:
   - api
   - config
@@ -18,3 +18,5 @@ import:
 - package: golang.org/x/net
   subpackages:
   - context
+- package: google.golang.org/grpc
+  version: 0d9891286aca15aeb2b0a73be9f5946c3cfefa85
