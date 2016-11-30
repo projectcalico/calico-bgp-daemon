@@ -14,6 +14,23 @@ import:
   - packet/bgp
   - server
   - table
+- package: github.com/projectcalico/libcalico-go
+  version: v1.0.0-rc2
+  subpackages:
+  - lib/api
+  - lib/api/unversioned
+  - lib/backend
+  - lib/backend/api
+  - lib/backend/compat
+  - lib/backend/etcd
+  - lib/backend/k8s
+  - lib/backend/model
+  - lib/client
+  - lib/errors
+  - lib/hwm
+  - lib/net
+  - lib/numorstring
+  - lib/scope
 - package: github.com/vishvananda/netlink
 - package: golang.org/x/net
   subpackages:
