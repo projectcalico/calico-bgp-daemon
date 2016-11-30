@@ -1,5 +1,5 @@
-hash: d8a158fac3a1dd2e018e2a0da1e67654dc2d92d276a472c565d91d0f8bb162ec
-updated: 2016-11-29T23:08:22.328464437-05:00
+hash: bf331ef4d548f26e745f64df961a11b4f8d60e165abb8c53c69acd9f31fd9ab8
+updated: 2016-11-30T15:09:25.43302073-08:00
 imports:
 - name: cloud.google.com/go
   version: 3b1ae45394a234c385be014e9a488f2bb6eef821
@@ -41,7 +41,7 @@ imports:
   - httputil
   - timeutil
 - name: github.com/davecgh/go-spew
-  version: fc32781af5e85e548d3f1abaf0fa3dbe8a72495c
+  version: 346938d642f2ec3594ed81d874461961cd0faa76
   subpackages:
   - spew
 - name: github.com/docker/distribution
@@ -59,7 +59,7 @@ imports:
   - log
   - swagger
 - name: github.com/fsnotify/fsnotify
-  version: f12c6236fe7b5cf6bcf30e5935d08cb079d78334
+  version: fd9ec7deca8bf46ecd2a795baaacf2b3a9be1197
 - name: github.com/ghodss/yaml
   version: 73d445a93680fa1a78ae23a5839bad48f32ba1ee
 - name: github.com/go-openapi/jsonpointer
@@ -85,7 +85,7 @@ imports:
 - name: github.com/google/gofuzz
   version: bbcb9da2d746f8bdbd6a936686a0a6067ada0ec5
 - name: github.com/hashicorp/hcl
-  version: d8c773c4cba11b11539e3d45f93daeaa5dcf1fa1
+  version: b97feebd3db0a834bb92535b0950e7d5d4527a58
   subpackages:
   - hcl/ast
   - hcl/parser
@@ -100,7 +100,7 @@ imports:
 - name: github.com/imdario/mergo
   version: 6633656539c1639d9d78127b7d47c622b5d7b6dc
 - name: github.com/influxdata/influxdb
-  version: 383332daed5595926c235f250b11433f67229c35
+  version: 3dc5165b3ccf66df6aa1a6e80a9b74a0f1d97d47
   subpackages:
   - client/v2
   - models
@@ -109,10 +109,8 @@ imports:
   version: 2eee05ed794112d45db504eb05aa693efd2b8b09
 - name: github.com/kelseyhightower/envconfig
   version: 9aca109c9aec4633fced9717c4a09ecab3d33111
-- name: github.com/kr/fs
-  version: 2788f0dbd16903de03cb8186e5c7d97b69ad387b
 - name: github.com/magiconair/properties
-  version: 61b492c03cf472e0c6419be5899b8e0dc28b1b88
+  version: 9c47895dc1ce54302908ab8a43385d1f5df2c11c
 - name: github.com/mailru/easyjson
   version: d5b7844b561a7bc640052f1b935f7b800330d7e0
   subpackages:
@@ -138,13 +136,9 @@ imports:
 - name: github.com/pelletier/go-buffruneio
   version: df1e16fde7fc330a0ca68167c23bf7ed6ac31d6d
 - name: github.com/pelletier/go-toml
-  version: 0049ab3dc4c4c70a9eee23087437b69c0dde2130
-- name: github.com/pkg/errors
-  version: a22138067af1c4942683050411a841ade67fe1eb
-- name: github.com/pkg/sftp
-  version: 4d0e916071f68db74f8a73926335f809396d6b42
+  version: 7cb988051d5045890cb91402a0b5fddc76c627bc
 - name: github.com/projectcalico/libcalico-go
-  version: 838a75af2ce9222826c49b76acfa882c697d4886
+  version: d1901d62e520449b2fffd6281909c470d3adf44e
   subpackages:
   - lib/api
   - lib/api/unversioned
@@ -167,14 +161,13 @@ imports:
 - name: github.com/satori/go.uuid
   version: b061729afc07e77a8aa4fad0a2fd840958f1942a
 - name: github.com/Sirupsen/logrus
-  version: d26492970760ca5d33129d2d799e34be5c4782eb
+  version: 42b84f9ec624953ecbf81a94feccb3f5935c5edf
 - name: github.com/spf13/afero
-  version: b28a7effac979219c2a2ed6205a4d70e4b1bcd02
+  version: 06b7e5f50606ecd49148a01a6008942d9b669217
   subpackages:
   - mem
-  - sftp
 - name: github.com/spf13/cast
-  version: e31f36ffc91a2ba9ddb72a4b6a607ff9b3d3cb63
+  version: 24b6558033ffe202bf42f0f3b870dcc798dd2ba8
 - name: github.com/spf13/jwalterweatherman
   version: 33c24e77fb80341fe7130ee7c594256ff08ccc46
 - name: github.com/spf13/pflag
@@ -186,15 +179,16 @@ imports:
   subpackages:
   - codec
 - name: github.com/vishvananda/netlink
-  version: 1e2e08e8a2dcdacaae3f14ac44c5cfa31361f270
+  version: a4f22d8ad2327663017dbb309b5e3f8b6f348020
   subpackages:
   - nl
+- name: github.com/vishvananda/netns
+  version: 8ba1072b58e0c2a240eb5f6120165c7776c3e7b8
 - name: golang.org/x/crypto
   version: 1351f936d976c60a0a48d728281922cf63eafb8d
   subpackages:
   - bcrypt
   - blowfish
-  - ssh
   - ssh/terminal
 - name: golang.org/x/net
   version: 6acef71eb69611914f7a30939ea9f6e194c78172
@@ -214,7 +208,7 @@ imports:
   - jws
   - jwt
 - name: golang.org/x/sys
-  version: 9c60d1c508f5134d1ca726b4641db998f2523357
+  version: d5645953809d8b4752afb2c3224b1f1ad73dfa70
   subpackages:
   - unix
 - name: golang.org/x/text
@@ -265,9 +259,23 @@ imports:
   version: 9dde971544235898fc9720ed594059f79fd3273c
 - name: gopkg.in/yaml.v2
   version: 53feefa2559fb8dfa8d81baad31be332c97d6c77
-- name: k8s.io/kubernetes
-  version: 5c918def7a61a6882316ba3a385a572d21a94228
+- name: k8s.io/client-go
+  version: 5d8c36c93cf544e3bde13caa4c6222b65753ec3c
   subpackages:
+  - discovery
+  - kubernetes
+  - kubernetes/typed/apps/v1beta1
+  - kubernetes/typed/authentication/v1beta1
+  - kubernetes/typed/authorization/v1beta1
+  - kubernetes/typed/autoscaling/v1
+  - kubernetes/typed/batch/v1
+  - kubernetes/typed/batch/v2alpha1
+  - kubernetes/typed/certificates/v1alpha1
+  - kubernetes/typed/core/v1
+  - kubernetes/typed/extensions/v1beta1
+  - kubernetes/typed/policy/v1beta1
+  - kubernetes/typed/rbac/v1alpha1
+  - kubernetes/typed/storage/v1beta1
   - pkg/api
   - pkg/api/errors
   - pkg/api/install
@@ -299,9 +307,6 @@ imports:
   - pkg/apis/certificates
   - pkg/apis/certificates/install
   - pkg/apis/certificates/v1alpha1
-  - pkg/apis/componentconfig
-  - pkg/apis/componentconfig/install
-  - pkg/apis/componentconfig/v1alpha1
   - pkg/apis/extensions
   - pkg/apis/extensions/install
   - pkg/apis/extensions/v1beta1
@@ -315,36 +320,13 @@ imports:
   - pkg/apis/storage/install
   - pkg/apis/storage/v1beta1
   - pkg/auth/user
-  - pkg/client/clientset_generated/internalclientset
-  - pkg/client/clientset_generated/internalclientset/typed/apps/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/authentication/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/authorization/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/autoscaling/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/batch/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/certificates/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/core/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/extensions/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/policy/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/rbac/internalversion
-  - pkg/client/clientset_generated/internalclientset/typed/storage/internalversion
-  - pkg/client/metrics
-  - pkg/client/restclient
-  - pkg/client/transport
-  - pkg/client/typed/discovery
-  - pkg/client/unversioned/auth
-  - pkg/client/unversioned/clientcmd
-  - pkg/client/unversioned/clientcmd/api
-  - pkg/client/unversioned/clientcmd/api/latest
-  - pkg/client/unversioned/clientcmd/api/v1
   - pkg/conversion
   - pkg/conversion/queryparams
   - pkg/fields
   - pkg/genericapiserver/openapi/common
-  - pkg/kubelet/qos
-  - pkg/kubelet/types
   - pkg/labels
-  - pkg/master/ports
   - pkg/runtime
+  - pkg/runtime/schema
   - pkg/runtime/serializer
   - pkg/runtime/serializer/json
   - pkg/runtime/serializer/protobuf
@@ -352,11 +334,13 @@ imports:
   - pkg/runtime/serializer/streaming
   - pkg/runtime/serializer/versioning
   - pkg/selection
+  - pkg/third_party/forked/golang/reflect
+  - pkg/third_party/forked/golang/template
   - pkg/types
   - pkg/util
   - pkg/util/cert
   - pkg/util/clock
-  - pkg/util/config
+  - pkg/util/diff
   - pkg/util/errors
   - pkg/util/flowcontrol
   - pkg/util/framer
@@ -383,6 +367,13 @@ imports:
   - plugin/pkg/client/auth
   - plugin/pkg/client/auth/gcp
   - plugin/pkg/client/auth/oidc
-  - third_party/forked/golang/reflect
-  - third_party/forked/golang/template
+  - rest
+  - tools/auth
+  - tools/cache
+  - tools/clientcmd
+  - tools/clientcmd/api
+  - tools/clientcmd/api/latest
+  - tools/clientcmd/api/v1
+  - tools/metrics
+  - transport
 testImports: []
