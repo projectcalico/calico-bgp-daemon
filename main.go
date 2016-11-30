@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -34,22 +33,18 @@ import (
 	bgp "github.com/osrg/gobgp/packet/bgp"
 	bgpserver "github.com/osrg/gobgp/server"
 	bgptable "github.com/osrg/gobgp/table"
+	calicocli "github.com/projectcalico/libcalico-go/lib/client"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/net/context"
 )
 
 const (
-	HOSTNAME          = "HOSTNAME"
-	ETCD_SCHEME       = "ETCD_SCHEME"
-	ETCD_AUTHORITY    = "ETCD_AUTHORITY"
-	ETCD_KEY_FILE     = "ETCD_KEY_FILE"
-	ETCD_CERT_FILE    = "ETCD_CERT_FILE"
-	ETCD_CA_CERT_FILE = "ETCD_CA_CERT_FILE"
-	IP                = "IP"
-	IP6               = "IP6"
-	CALICO_PREFIX     = "/calico"
-	CALICO_BGP        = CALICO_PREFIX + "/bgp/v1"
-	CALICO_AGGR       = CALICO_PREFIX + "/ipam/v2/host"
+	HOSTNAME      = "HOSTNAME"
+	IP            = "IP"
+	IP6           = "IP6"
+	CALICO_PREFIX = "/calico"
+	CALICO_BGP    = CALICO_PREFIX + "/bgp/v1"
+	CALICO_AGGR   = CALICO_PREFIX + "/ipam/v2/host"
 
 	defaultDialTimeout = 30 * time.Second
 )
@@ -71,17 +66,29 @@ func errorButKeyNotFound(err error) error {
 	return err
 }
 
-func getTransport() (*http.Transport, error) {
-	cafile := os.Getenv(ETCD_CA_CERT_FILE)
-	certfile := os.Getenv(ETCD_CERT_FILE)
-	keyfile := os.Getenv(ETCD_KEY_FILE)
-
-	tls := transport.TLSInfo{
-		CAFile:   cafile,
-		CertFile: certfile,
-		KeyFile:  keyfile,
+func getEtcdConfig() (etcd.Config, error) {
+	var config etcd.Config
+	cfg, err := calicocli.LoadClientConfigFromEnvironment()
+	if err != nil {
+		return config, err
 	}
-	return transport.NewTransport(tls, defaultDialTimeout)
+	etcdcfg := cfg.Spec.EtcdConfig
+	etcdEndpoints := etcdcfg.EtcdEndpoints
+	if etcdEndpoints == "" {
+		etcdEndpoints = fmt.Sprintf("%s://%s", etcdcfg.EtcdScheme, etcdcfg.EtcdAuthority)
+	}
+	tls := transport.TLSInfo{
+		CAFile:   etcdcfg.EtcdCACertFile,
+		CertFile: etcdcfg.EtcdCertFile,
+		KeyFile:  etcdcfg.EtcdKeyFile,
+	}
+	t, err := transport.NewTransport(tls, defaultDialTimeout)
+	if err != nil {
+		return config, err
+	}
+	config.Endpoints = strings.Split(etcdEndpoints, ",")
+	config.Transport = t
+	return config, nil
 }
 
 func getGlobalASN(api etcd.KeysAPI) (uint32, error) {
@@ -610,20 +617,9 @@ func main() {
 
 	logrus.SetLevel(logrus.DebugLevel)
 
-	etcdAuthority := os.Getenv(ETCD_AUTHORITY)
-	etcdScheme := os.Getenv(ETCD_SCHEME)
-	if etcdScheme == "" {
-		etcdScheme = "http"
-	}
-
-	transport, err := getTransport()
+	config, err := getEtcdConfig()
 	if err != nil {
 		log.Fatal(err)
-	}
-
-	config := etcd.Config{
-		Endpoints: []string{fmt.Sprintf("%s://%s", etcdScheme, etcdAuthority)},
-		Transport: transport,
 	}
 
 	cli, err := etcd.New(config)
