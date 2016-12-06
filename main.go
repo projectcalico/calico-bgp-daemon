@@ -1,4 +1,4 @@
-// Copyright (C) 2016 Nippon Telegraph and Telephone Corporation.
+// Copyright (C) 2016-2017 Nippon Telegraph and Telephone Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -49,6 +49,7 @@ const (
 	CALICO_PREFIX = "/calico"
 	CALICO_BGP    = CALICO_PREFIX + "/bgp/v1"
 	CALICO_AGGR   = CALICO_PREFIX + "/ipam/v2/host"
+	CALICO_IPAM   = CALICO_PREFIX + "/v1/ipam"
 
 	defaultDialTimeout = 30 * time.Second
 
@@ -106,6 +107,7 @@ type Server struct {
 	etcd      etcd.KeysAPI
 	ipv4      net.IP
 	ipv6      net.IP
+	ipam      *ipamCache
 }
 
 func NewServer() (*Server, error) {
@@ -172,25 +174,73 @@ func (s *Server) Serve() {
 	}
 
 	if err := s.bgpServer.Start(globalConfig); err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to start BGP server:", err)
 	}
 
 	if err := s.initialPolicySetting(); err != nil {
 		log.Fatal(err)
 	}
 
-	// monitor routes from other BGP peers and update FIB
-	s.t.Go(s.watchBGPPath)
+	s.ipam = newIPAMCache(s.etcd, s.ipamUpdateHandler)
+	// sync IPAM and call ipamUpdateHandler
+	s.t.Go(func() error { return fmt.Errorf("syncIPAM: %s", s.ipam.sync()) })
+	// watch routes from other BGP peers and update FIB
+	s.t.Go(func() error { return fmt.Errorf("watchBGPPath: %s", s.watchBGPPath()) })
 	// watch prefix assigned and announce to other BGP peers
-	s.t.Go(s.watchPrefix)
+	s.t.Go(func() error { return fmt.Errorf("watchPrefix: %s", s.watchPrefix()) })
 	// watch BGP configuration
-	s.t.Go(s.watchBGPConfig)
+	s.t.Go(func() error { return fmt.Errorf("watchBGPConfig: %s", s.watchBGPConfig()) })
 	// watch routes added by kernel and announce to other BGP peers
-	s.t.Go(s.watchKernelRoute)
+	s.t.Go(func() error { return fmt.Errorf("watchKernelRoute: %s", s.watchKernelRoute()) })
 
 	<-s.t.Dying()
 	log.Fatal(s.t.Err())
 
+}
+
+func isCrossSubnet(gw net.IP, subnet net.IPNet) bool {
+	p := &ipPool{CIDR: subnet.String()}
+	result := !p.contain(gw.String() + "/32")
+	return result
+}
+
+func (s *Server) ipamUpdateHandler(pool *ipPool) error {
+	filter := &netlink.Route{
+		Protocol: RTPROT_GOBGP,
+	}
+	list, err := netlink.RouteListFiltered(netlink.FAMILY_V4, filter, netlink.RT_FILTER_PROTOCOL)
+	if err != nil {
+		return err
+	}
+	node, err := s.client.Nodes().Get(calicoapi.NodeMetadata{Name: os.Getenv(NODENAME)})
+	if err != nil {
+		return err
+	}
+
+	for _, route := range list {
+		if route.Dst == nil {
+			continue
+		}
+		if pool.contain(route.Dst.String()) {
+			ipip := pool.IPIP != ""
+			if pool.Mode == "cross-subnet" && !isCrossSubnet(route.Gw, node.Spec.BGP.IPv4Address.Network().IPNet) {
+				ipip = false
+			}
+			if ipip {
+				i, err := net.InterfaceByName(pool.IPIP)
+				if err != nil {
+					return err
+				}
+				route.LinkIndex = i.Index
+				route.SetFlag(netlink.FLAG_ONLINK)
+			} else {
+				route.LinkIndex = 0
+				route.Flags = 0
+			}
+			return netlink.RouteReplace(&route)
+		}
+	}
+	return nil
 }
 
 func (s *Server) getNodeASN() (numorstring.ASNumber, error) {
@@ -512,7 +562,15 @@ func (s *Server) watchBGPConfig() error {
 		if err != nil {
 			return err
 		}
-		log.Printf("watch: %v", res)
+		prev := ""
+		if res.PrevNode != nil {
+			prev = res.PrevNode.Value
+		}
+		log.Printf("watch: action: %s, key: %s node: %s, prev-node: %s", res.Action, res.Node.Key, res.Node.Value, prev)
+		if res.Action == "set" && res.Node.Value == prev {
+			log.Printf("same value. ignore")
+			continue
+		}
 
 		handleNonMeshNeighbor := func(neighborType string) error {
 			switch res.Action {
@@ -549,6 +607,9 @@ func (s *Server) watchBGPConfig() error {
 				continue
 			}
 			deleteNeighbor := func(node *etcd.Node) error {
+				if node.Value == "" {
+					return nil
+				}
 				n := &bgpconfig.Neighbor{
 					Config: bgpconfig.NeighborConfig{
 						NeighborAddress: node.Value,
@@ -569,6 +630,9 @@ func (s *Server) watchBGPConfig() error {
 						if err = deleteNeighbor(res.PrevNode); err != nil {
 							return err
 						}
+					}
+					if res.Node.Value == "" {
+						continue
 					}
 					asn, err := s.getPeerASN(host)
 					if err != nil {
@@ -662,6 +726,7 @@ func (s *Server) watchKernelRoute() error {
 		return err
 	}
 	for update := range ch {
+		log.Printf("kernel update: %s", update)
 		if update.Table == syscall.RT_TABLE_MAIN && (update.Protocol == syscall.RTPROT_KERNEL || update.Protocol == syscall.RTPROT_BOOT) {
 			isWithdrawal := false
 			switch update.Type {
@@ -672,11 +737,11 @@ func (s *Server) watchKernelRoute() error {
 				log.Printf("unhandled rtm type: %d", update.Type)
 				continue
 			}
-			log.Printf("kernel update: %s", update)
 			path, err := s.makePath(update.Dst.String(), isWithdrawal)
 			if err != nil {
 				return err
 			}
+			log.Printf("made path from kernel update: %s", path)
 			if _, err = s.bgpServer.AddPath("", []*bgptable.Path{path}); err != nil {
 				return err
 			}
@@ -687,7 +752,7 @@ func (s *Server) watchKernelRoute() error {
 
 // injectRoute is a helper function to inject BGP routes to linux kernel
 // TODO: multipath support
-func injectRoute(path *bgptable.Path) error {
+func (s *Server) injectRoute(path *bgptable.Path) error {
 	nexthop := path.GetNexthop()
 	nlri := path.GetNlri()
 	dst, _ := netlink.ParseIPNet(nlri.String())
@@ -696,11 +761,35 @@ func injectRoute(path *bgptable.Path) error {
 		Gw:       nexthop,
 		Protocol: RTPROT_GOBGP,
 	}
+
+	if dst.IP.To4() != nil {
+		if p := s.ipam.match(nlri.String()); p != nil {
+			ipip := p.IPIP != ""
+
+			node, err := s.client.Nodes().Get(calicoapi.NodeMetadata{Name: os.Getenv(NODENAME)})
+			if err != nil {
+				return err
+			}
+
+			if p.Mode == "cross-subnet" && !isCrossSubnet(route.Gw, node.Spec.BGP.IPv4Address.Network().IPNet) {
+				ipip = false
+			}
+			if ipip {
+				i, err := net.InterfaceByName(p.IPIP)
+				if err != nil {
+					return err
+				}
+				route.LinkIndex = i.Index
+				route.SetFlag(netlink.FLAG_ONLINK)
+			}
+		}
+	}
+
 	if path.IsWithdraw {
 		log.Printf("removed route %s from kernel", nlri)
 		return netlink.RouteDel(route)
 	}
-	log.Printf("added route %s to kernel", nlri)
+	log.Printf("added route %s to kernel %s", nlri, route)
 	return netlink.RouteReplace(route)
 }
 
@@ -719,7 +808,7 @@ func (s *Server) watchBGPPath() error {
 			if path.IsLocal() {
 				continue
 			}
-			if err := injectRoute(path); err != nil {
+			if err := s.injectRoute(path); err != nil {
 				return err
 			}
 		}
@@ -863,10 +952,11 @@ func main() {
 		os.Exit(0)
 	}
 
-	logrus.SetLevel(logrus.DebugLevel)
+	logrus.SetLevel(logrus.InfoLevel)
 
 	server, err := NewServer()
 	if err != nil {
+		log.Printf("failed to create new server")
 		log.Fatal(err)
 	}
 
