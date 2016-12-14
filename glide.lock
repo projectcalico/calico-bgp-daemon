@@ -1,5 +1,5 @@
-hash: bf331ef4d548f26e745f64df961a11b4f8d60e165abb8c53c69acd9f31fd9ab8
-updated: 2016-11-30T15:09:25.43302073-08:00
+hash: c2ab068779a7a61daa17c1a76510fe373071953a0b50057e009569d23313abb1
+updated: 2016-12-13T18:38:07.369478917-08:00
 imports:
 - name: cloud.google.com/go
   version: 3b1ae45394a234c385be014e9a488f2bb6eef821
@@ -85,7 +85,7 @@ imports:
 - name: github.com/google/gofuzz
   version: bbcb9da2d746f8bdbd6a936686a0a6067ada0ec5
 - name: github.com/hashicorp/hcl
-  version: b97feebd3db0a834bb92535b0950e7d5d4527a58
+  version: 37ab263305aaeb501a60eb16863e808d426e37f2
   subpackages:
   - hcl/ast
   - hcl/parser
@@ -100,7 +100,7 @@ imports:
 - name: github.com/imdario/mergo
   version: 6633656539c1639d9d78127b7d47c622b5d7b6dc
 - name: github.com/influxdata/influxdb
-  version: 3dc5165b3ccf66df6aa1a6e80a9b74a0f1d97d47
+  version: 855c567c67d7fff1e2f91617c292ea20cf26e53c
   subpackages:
   - client/v2
   - models
@@ -108,7 +108,7 @@ imports:
 - name: github.com/jonboulle/clockwork
   version: 2eee05ed794112d45db504eb05aa693efd2b8b09
 - name: github.com/kelseyhightower/envconfig
-  version: 9aca109c9aec4633fced9717c4a09ecab3d33111
+  version: 5c008110b20b657eb7e005b83d0a5f6aa6bb5f4b
 - name: github.com/magiconair/properties
   version: 9c47895dc1ce54302908ab8a43385d1f5df2c11c
 - name: github.com/mailru/easyjson
@@ -118,7 +118,7 @@ imports:
   - jlexer
   - jwriter
 - name: github.com/mitchellh/mapstructure
-  version: f3009df150dadf309fdee4a54ed65c124afad715
+  version: bfdb1a85537d60bc7e954e600c250219ea497417
 - name: github.com/osrg/gobgp
   version: ee8ce99e2df1f732ef515e20fb3054c0cff0249b
   subpackages:
@@ -136,9 +136,17 @@ imports:
 - name: github.com/pelletier/go-buffruneio
   version: df1e16fde7fc330a0ca68167c23bf7ed6ac31d6d
 - name: github.com/pelletier/go-toml
-  version: 7cb988051d5045890cb91402a0b5fddc76c627bc
+  version: 017119f7a78a0b5fc0ea39ef6be09f03acf3345d
+- name: github.com/projectcalico/go-json
+  version: 6219dc7339ba20ee4c57df0a8baac62317d19cb1
+  subpackages:
+  - json
+- name: github.com/projectcalico/go-yaml
+  version: 955bc3e451ef0c9df8b9113bf2e341139cdafab2
+- name: github.com/projectcalico/go-yaml-wrapper
+  version: 598e54215bee41a19677faa4f0c32acd2a87eb56
 - name: github.com/projectcalico/libcalico-go
-  version: d1901d62e520449b2fffd6281909c470d3adf44e
+  version: f87d39740b5a49891d6ee2646a17326c5e337b20
   subpackages:
   - lib/api
   - lib/api/unversioned
@@ -147,6 +155,7 @@ imports:
   - lib/backend/compat
   - lib/backend/etcd
   - lib/backend/k8s
+  - lib/backend/k8s/thirdparty
   - lib/backend/model
   - lib/client
   - lib/errors
@@ -161,9 +170,9 @@ imports:
 - name: github.com/satori/go.uuid
   version: b061729afc07e77a8aa4fad0a2fd840958f1942a
 - name: github.com/Sirupsen/logrus
-  version: 42b84f9ec624953ecbf81a94feccb3f5935c5edf
+  version: 881bee4e20a5d11a6a88a5667c6f292072ac1963
 - name: github.com/spf13/afero
-  version: 06b7e5f50606ecd49148a01a6008942d9b669217
+  version: 2f30b2a92c0e5700bcfe4715891adb1f2a7a406d
   subpackages:
   - mem
 - name: github.com/spf13/cast
@@ -173,13 +182,13 @@ imports:
 - name: github.com/spf13/pflag
   version: 08b1a584251b5b62f458943640fc8ebd4d50aaa5
 - name: github.com/spf13/viper
-  version: 651d9d916abc3c3d6a91a12549495caba5edffd2
+  version: 5ed0fc31f7f453625df314d8e66b9791e8d13003
 - name: github.com/ugorji/go
   version: f1f1a805ed361a0e078bb537e4ea78cd37dcf065
   subpackages:
   - codec
 - name: github.com/vishvananda/netlink
-  version: a4f22d8ad2327663017dbb309b5e3f8b6f348020
+  version: c750a61f1836d48aacb1c74deafb05cfb549eb92
   subpackages:
   - nl
 - name: github.com/vishvananda/netns
@@ -208,7 +217,7 @@ imports:
   - jws
   - jwt
 - name: golang.org/x/sys
-  version: d5645953809d8b4752afb2c3224b1f1ad73dfa70
+  version: 8f0908ab3b2457e2e15403d3697c9ef5cb4b57a9
   subpackages:
   - unix
 - name: golang.org/x/text
@@ -256,11 +265,11 @@ imports:
   subpackages:
   - patricia
 - name: gopkg.in/tomb.v2
-  version: 9dde971544235898fc9720ed594059f79fd3273c
+  version: d5d1b5820637886def9eef33e03a27a9f166942c
 - name: gopkg.in/yaml.v2
   version: 53feefa2559fb8dfa8d81baad31be332c97d6c77
 - name: k8s.io/client-go
-  version: 5d8c36c93cf544e3bde13caa4c6222b65753ec3c
+  version: 41a99d711af778a177f07402217b85d456b50da1
   subpackages:
   - discovery
   - kubernetes
