@@ -17,6 +17,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -48,6 +49,9 @@ const (
 
 	defaultDialTimeout = 30 * time.Second
 )
+
+// VERSION is filled out during the build process (using git describe output)
+var VERSION string
 
 func underscore(ip string) string {
 	return strings.Map(func(r rune) rune {
@@ -614,6 +618,21 @@ func monitorPath(watcher *bgpserver.Watcher) error {
 }
 
 func main() {
+
+	// Display the version on "-v", otherwise just delegate to the skel code.
+	// Use a new flag set so as not to conflict with existing libraries which use "flag"
+	flagSet := flag.NewFlagSet("Calico", flag.ExitOnError)
+
+	version := flagSet.Bool("v", false, "Display version")
+	err := flagSet.Parse(os.Args[1:])
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	if *version {
+		fmt.Println(VERSION)
+		os.Exit(0)
+	}
 
 	logrus.SetLevel(logrus.DebugLevel)
 
