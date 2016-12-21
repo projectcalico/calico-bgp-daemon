@@ -2,6 +2,7 @@
 CALICO_BUILD?=calico/go-build
 SRC_FILES=$(shell find . -type f -name '*.go')
 GOBGPD_VERSION?=$(shell git describe --tags --dirty)
+CONTAINER_NAME?=calico/gobgpd
 
 vendor:
 	docker run --rm -v ${PWD}:/go/src/github.com/projectcalico/calico-bgp-daemon:rw --entrypoint=sh \
@@ -32,7 +33,29 @@ build-containerized: clean vendor dist/gobgp
 			cd /go/src/github.com/projectcalico/calico-bgp-daemon && \
 			make binary'
 
-release: clean build-containerized
+$(CONTAINER_NAME): build-containerized
+	docker build -t $(CONTAINER_NAME) .
+
+release: clean
+ifndef VERSION
+	$(error VERSION is undefined - run using make release VERSION=vX.Y.Z)
+endif
+	git tag $(VERSION)
+	$(MAKE) $(CONTAINER_NAME) 
+	# Check that the version output appears on a line of its own (the -x option to grep).
+	# Tests that the "git tag" makes it into the binary. Main point is to catch "-dirty" builds
+	@echo "Checking if the tag made it into the binary"
+	docker run --rm calico/gobgpd -v | grep -x $(VERSION) || (echo "Reported version:" `docker run --rm calico/gobgpd -v` "\nExpected version: $(VERSION)" && exit 1)
+	docker tag calico/gobgpd calico/gobgpd:$(VERSION)
+	docker tag calico/gobgpd quay.io/calico/gobgpd:$(VERSION)
+	docker tag calico/gobgpd quay.io/calico/gobgpd:latest
+
+	@echo "Now push the tag and images. Then create a release on Github and attach the dist/gobgpd and dist/gobgp binaries"
+	@echo "git push origin $(VERSION)"
+	@echo "docker push calico/gobgpd:$(VERSION)"
+	@echo "docker push quay.io/calico/gobgpd:$(VERSION)"
+	@echo "docker push calico/gobgpd:latest"
+	@echo "docker push quay.io/calico/gobgpd:latest"
 
 clean:
 	rm -rf vendor
