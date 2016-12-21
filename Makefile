@@ -15,7 +15,7 @@ binary: dist/gobgpd
 
 dist/gobgp:
 	mkdir -p $(@D)
-	docker run --rm -v `pwd`/dist:/code golang:1.7 \
+	docker run --rm -v `pwd`/dist:/code $(CALICO_BUILD) \
 	sh -c 'go get github.com/osrg/gobgp/gobgp && cp /go/bin/gobgp /code && chown $(shell id -u):$(shell id -g) /code/gobgp'
 
 dist/gobgpd: $(SRC_FILES) vendor
