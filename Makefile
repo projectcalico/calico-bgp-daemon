@@ -6,8 +6,8 @@ CONTAINER_NAME?=calico/gobgpd
 
 vendor:
 	docker run --rm -v ${PWD}:/go/src/github.com/projectcalico/calico-bgp-daemon:rw --entrypoint=sh \
-        dockerepo/glide -c ' \
-	cd /go/src/github.com/projectcalico/calico-bgp-daemon; \
+    dockerepo/glide -c \
+	'cd /go/src/github.com/projectcalico/calico-bgp-daemon; \
 	glide install -strip-vcs -strip-vendor --cache; \
 	chown $(shell id -u):$(shell id -u) -R vendor'
 
@@ -15,8 +15,11 @@ binary: dist/gobgpd
 
 dist/gobgp:
 	mkdir -p $(@D)
-	docker run --rm -v `pwd`/dist:/go/code $(CALICO_BUILD) \
-	sh -c 'mkdir -p /go/code && go get github.com/osrg/gobgp/gobgp && cp /go/bin/gobgp /go/code && chown $(shell id -u):$(shell id -g) /go/code/gobgp'
+	docker run --rm -v `pwd`/dist:/go/code \
+	-e LOCAL_USER_ID=`id -u $$USER` \
+	$(CALICO_BUILD) sh -c \
+	'mkdir -p /go/code && go get github.com/osrg/gobgp/gobgp && cp /go/bin/gobgp /go/code && \
+	chown $(shell id -u):$(shell id -g) /go/code/gobgp'
 
 dist/gobgpd: $(SRC_FILES) vendor
 	mkdir -p $(@D)
