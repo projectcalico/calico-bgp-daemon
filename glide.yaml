@@ -1,4 +1,4 @@
-package: .
+package: github.com/projectcalico/calico-bgp-daemon
 import:
 - package: github.com/Sirupsen/logrus
 - package: github.com/coreos/etcd
@@ -15,7 +15,7 @@ import:
   - server
   - table
 - package: github.com/projectcalico/libcalico-go
-  version: v1.0.0-rc6
+  version: v1.0.2
   subpackages:
   - lib/api
   - lib/api/unversioned
@@ -36,4 +36,3 @@ import:
   subpackages:
   - context
 - package: google.golang.org/grpc
-  version: 0d9891286aca15aeb2b0a73be9f5946c3cfefa85

@@ -3,25 +3,31 @@ CALICO_BUILD?=calico/go-build
 SRC_FILES=$(shell find . -type f -name '*.go')
 GOBGPD_VERSION?=$(shell git describe --tags --dirty)
 CONTAINER_NAME?=calico/gobgpd
+PACKAGE_NAME?=github.com/projectcalico/calico-bgp-daemon
+LOCAL_USER_ID?=$(shell id -u $$USER)
 
-vendor:
-	docker run --rm -v ${PWD}:/go/src/github.com/projectcalico/calico-bgp-daemon:rw --entrypoint=sh \
-    dockerepo/glide -c \
-	'cd /go/src/github.com/projectcalico/calico-bgp-daemon; \
-	glide install -strip-vcs -strip-vendor --cache; \
-	chown $(shell id -u):$(shell id -u) -R vendor'
+# Use this to populate the vendor directory after checking out the repository.
+# To update upstream dependencies, delete the glide.lock file first.
+vendor: glide.yaml
+	mkdir -p $(HOME)/.glide
+	# To build without Docker just run "glide install -strip-vendor"
+	docker run --rm \
+    -v $(CURDIR):/go/src/$(PACKAGE_NAME):rw \
+    -v $(HOME)/.glide:/home/user/.glide:rw \
+    -e LOCAL_USER_ID=$(LOCAL_USER_ID) \
+    $(CALICO_BUILD) /bin/sh -c ' \
+		  cd /go/src/$(PACKAGE_NAME) && \
+      glide install -strip-vendor'
 
-binary: dist/gobgpd
+binary: dist/calico-bgp-daemon
 
 dist/gobgp:
 	mkdir -p $(@D)
-	docker run --rm -v `pwd`/dist:/go/code \
-	-e LOCAL_USER_ID=`id -u $$USER` \
-	$(CALICO_BUILD) sh -c \
-	'mkdir -p /go/code && go get github.com/osrg/gobgp/gobgp && cp /go/bin/gobgp /go/code && \
-	chown $(shell id -u):$(shell id -g) /go/code/gobgp'
+	docker run --rm -v $(CURDIR)/dist:/go/bin \
+	-e LOCAL_USER_ID=$(LOCAL_USER_ID) \
+	$(CALICO_BUILD) go get -v github.com/osrg/gobgp/gobgp
 
-dist/gobgpd: $(SRC_FILES) vendor
+dist/calico-bgp-daemon: $(SRC_FILES) vendor
 	mkdir -p $(@D)
 	go build -v -o dist/calico-bgp-daemon \
 	-ldflags "-X main.VERSION=$(GOBGPD_VERSION) -s -w" main.go
@@ -29,11 +35,11 @@ dist/gobgpd: $(SRC_FILES) vendor
 build-containerized: clean vendor dist/gobgp
 	mkdir -p dist
 	docker run --rm \
-	-v ${PWD}:/go/src/github.com/projectcalico/calico-bgp-daemon \
-	-v ${PWD}/dist:/go/src/github.com/projectcalico/calico-bgp-daemon/dist \
-	-e LOCAL_USER_ID=`id -u $$USER` \
+	-v $(CURDIR):/go/src/$(PACKAGE_NAME) \
+	-v $(CURDIR)/dist:/go/src/$(PACKAGE_NAME)/dist \
+	-e LOCAL_USER_ID=$(LOCAL_USER_ID) \
 		$(CALICO_BUILD) sh -c '\
-			cd /go/src/github.com/projectcalico/calico-bgp-daemon && \
+			cd /go/src/$(PACKAGE_NAME) && \
 			make binary'
 
 $(CONTAINER_NAME): build-containerized
