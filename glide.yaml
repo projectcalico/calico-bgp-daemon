@@ -1,13 +1,14 @@
 package: github.com/projectcalico/calico-bgp-daemon
 import:
 - package: github.com/Sirupsen/logrus
+  version: v0.11.2
 - package: github.com/coreos/etcd
-  version: ~3.1.0-alpha.1
+  version: v3.1.1
   subpackages:
   - client
   - pkg/transport
 - package: github.com/osrg/gobgp
-  version: ee8ce99e2df1f732ef515e20fb3054c0cff0249b
+  version: v1.16.0
   subpackages:
   - api
   - config
@@ -15,24 +16,14 @@ import:
   - server
   - table
 - package: github.com/projectcalico/libcalico-go
-  version: v1.0.2
+  version: v1.1.0
   subpackages:
   - lib/api
-  - lib/api/unversioned
-  - lib/backend
-  - lib/backend/api
-  - lib/backend/compat
-  - lib/backend/etcd
-  - lib/backend/k8s
-  - lib/backend/model
   - lib/client
-  - lib/errors
-  - lib/hwm
-  - lib/net
   - lib/numorstring
   - lib/scope
 - package: github.com/vishvananda/netlink
 - package: golang.org/x/net
   subpackages:
   - context
-- package: google.golang.org/grpc
+- package: gopkg.in/tomb.v2
