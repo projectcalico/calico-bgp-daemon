@@ -22,8 +22,8 @@ import (
 	"log"
 	"net"
 	"os"
-	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Sirupsen/logrus"
@@ -51,6 +51,11 @@ const (
 	CALICO_AGGR   = CALICO_PREFIX + "/ipam/v2/host"
 
 	defaultDialTimeout = 30 * time.Second
+
+	aggregatedPrefixSetName = "aggregated"
+	hostPrefixSetName       = "host"
+
+	RTPROT_GOBGP = 0x11
 )
 
 // VERSION is filled out during the build process (using git describe output)
@@ -97,7 +102,7 @@ func getEtcdConfig(cfg *calicoapi.CalicoAPIConfig) (etcd.Config, error) {
 type Server struct {
 	t         tomb.Tomb
 	bgpServer *bgpserver.BgpServer
-	cli       *calicocli.Client
+	client    *calicocli.Client
 	etcd      etcd.KeysAPI
 	ipv4      net.IP
 	ipv6      net.IP
@@ -145,7 +150,7 @@ func NewServer() (*Server, error) {
 
 	return &Server{
 		bgpServer: bgpServer,
-		cli:       calicoCli,
+		client:    calicoCli,
 		etcd:      etcdCli,
 		ipv4:      ipv4,
 		ipv6:      ipv6,
@@ -170,12 +175,18 @@ func (s *Server) Serve() {
 		log.Fatal(err)
 	}
 
+	if err := s.initialPolicySetting(); err != nil {
+		log.Fatal(err)
+	}
+
 	// monitor routes from other BGP peers and update FIB
-	s.t.Go(s.monitorPath)
+	s.t.Go(s.watchBGPPath)
 	// watch prefix assigned and announce to other BGP peers
 	s.t.Go(s.watchPrefix)
 	// watch BGP configuration
 	s.t.Go(s.watchBGPConfig)
+	// watch routes added by kernel and announce to other BGP peers
+	s.t.Go(s.watchKernelRoute)
 
 	<-s.t.Dying()
 	log.Fatal(s.t.Err())
@@ -183,11 +194,11 @@ func (s *Server) Serve() {
 }
 
 func (s *Server) getGlobalASN() (numorstring.ASNumber, error) {
-	return s.cli.Config().GetGlobalASNumber()
+	return s.client.Config().GetGlobalASNumber()
 }
 
 func (s *Server) getPeerASN(host string) (numorstring.ASNumber, error) {
-	node, err := s.cli.Nodes().Get(calicoapi.NodeMetadata{Name: host})
+	node, err := s.client.Nodes().Get(calicoapi.NodeMetadata{Name: host})
 	if err != nil {
 		return 0, err
 	}
@@ -216,15 +227,16 @@ func (s *Server) getGlobalConfig() (*bgpconfig.Global, error) {
 }
 
 func (s *Server) isMeshMode() (bool, error) {
-	return s.cli.Config().GetNodeToNodeMesh()
+	return s.client.Config().GetNodeToNodeMesh()
 }
 
+// getMeshNeighborConfigs returns the list of mesh BGP neighbor configuration struct
 func (s *Server) getMeshNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
 	globalASN, err := s.getGlobalASN()
 	if err != nil {
 		return nil, err
 	}
-	nodes, err := s.cli.Nodes().List(calicoapi.NodeMetadata{})
+	nodes, err := s.client.Nodes().List(calicoapi.NodeMetadata{})
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +282,7 @@ func (s *Server) getMeshNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
 
 }
 
+// getNeighborConfigFromPeer returns a BGP neighbor configuration struct from *etcd.Node
 func getNeighborConfigFromPeer(node *etcd.Node, neighborType string) (*bgpconfig.Neighbor, error) {
 	m := &struct {
 		IP  string `json:"ip"`
@@ -291,6 +304,8 @@ func getNeighborConfigFromPeer(node *etcd.Node, neighborType string) (*bgpconfig
 	}, nil
 }
 
+// getNonMeshNeighborConfigs returns the list of non-mesh BGP neighbor configuration struct
+// valid neighborType is either "global" or "node"
 func (s *Server) getNonMeshNeighborConfigs(neighborType string) ([]*bgpconfig.Neighbor, error) {
 	var metadata calicoapi.BGPPeerMetadata
 	switch neighborType {
@@ -302,7 +317,7 @@ func (s *Server) getNonMeshNeighborConfigs(neighborType string) ([]*bgpconfig.Ne
 	default:
 		return nil, fmt.Errorf("invalid neighbor type: %s", neighborType)
 	}
-	list, err := s.cli.BGPPeers().List(metadata)
+	list, err := s.client.BGPPeers().List(metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -320,14 +335,18 @@ func (s *Server) getNonMeshNeighborConfigs(neighborType string) ([]*bgpconfig.Ne
 	return ns, nil
 }
 
+// getGlobalNeighborConfigs returns the list of global BGP neighbor configuration struct
 func (s *Server) getGlobalNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
 	return s.getNonMeshNeighborConfigs("global")
 }
 
+// getNodeNeighborConfigs returns the list of node specific BGP neighbor configuration struct
 func (s *Server) getNodeSpecificNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
 	return s.getNonMeshNeighborConfigs("node")
 }
 
+// getNeighborConfigs returns the complete list of BGP neighbor configuration
+// which the node should peer.
 func (s *Server) getNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
 	var neighbors []*bgpconfig.Neighbor
 	// --- Node-to-node mesh ---
@@ -355,23 +374,21 @@ func (s *Server) getNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
 	return neighbors, nil
 }
 
-func (s *Server) makePath(key string, isWithdrawal bool) (*bgptable.Path, error) {
+func etcdKeyToPrefix(key string) string {
 	path := strings.Split(key, "/")
-	elems := strings.Split(path[len(path)-1], "-")
-	if len(elems) != 2 {
-		return nil, fmt.Errorf("invalid prefix format: %s", path[len(path)-1])
-	}
-	prefix := elems[0]
-	masklen, err := strconv.ParseUint(elems[1], 10, 8)
+	return strings.Replace(path[len(path)-1], "-", "/", 1)
+}
+
+func (s *Server) makePath(prefix string, isWithdrawal bool) (*bgptable.Path, error) {
+	_, ipNet, err := net.ParseCIDR(prefix)
 	if err != nil {
 		return nil, err
 	}
 
-	p := net.ParseIP(prefix)
+	p := ipNet.IP
+	masklen, _ := ipNet.Mask.Size()
 	v4 := true
-	if p == nil {
-		return nil, fmt.Errorf("invalid prefix format: %s", key)
-	} else if p.To4() == nil {
+	if p.To4() == nil {
 		v4 = false
 	}
 
@@ -391,6 +408,10 @@ func (s *Server) makePath(key string, isWithdrawal bool) (*bgptable.Path, error)
 	return bgptable.NewPath(nil, nlri, isWithdrawal, attrs, time.Now(), false), nil
 }
 
+// getAssignedPrefixes retrives prefixes assigned to the node and returns them as a
+// list of BGP path.
+// using etcd directly since libcalico-go doesn't seem to have a method to return
+// assigned prefixes yet.
 func (s *Server) getAssignedPrefixes(api etcd.KeysAPI) ([]*bgptable.Path, error) {
 	var ps []*bgptable.Path
 	f := func(version string) error {
@@ -399,7 +420,7 @@ func (s *Server) getAssignedPrefixes(api etcd.KeysAPI) ([]*bgptable.Path, error)
 			return err
 		}
 		for _, v := range res.Node.Nodes {
-			path, err := s.makePath(v.Key, false)
+			path, err := s.makePath(etcdKeyToPrefix(v.Key), false)
 			if err != nil {
 				return err
 			}
@@ -420,10 +441,17 @@ func (s *Server) getAssignedPrefixes(api etcd.KeysAPI) ([]*bgptable.Path, error)
 	return ps, nil
 }
 
+// watchPrefix watches etcd /calico/ipam/v2/host/$NODENAME and add/delete
+// aggregated routes which are assigned to the node.
+// This function also updates policy appropriately.
 func (s *Server) watchPrefix() error {
 
 	paths, err := s.getAssignedPrefixes(s.etcd)
 	if err != nil {
+		return err
+	}
+
+	if err = s.updatePrefixSet(paths); err != nil {
 		return err
 	}
 
@@ -439,21 +467,30 @@ func (s *Server) watchPrefix() error {
 			return err
 		}
 		var path *bgptable.Path
+		key := etcdKeyToPrefix(res.Node.Key)
 		if res.Action == "delete" {
-			path, err = s.makePath(res.Node.Key, true)
+			path, err = s.makePath(key, true)
 		} else {
-			path, err = s.makePath(res.Node.Key, false)
+			path, err = s.makePath(key, false)
 		}
 		if err != nil {
 			return err
 		}
-		if _, err := s.bgpServer.AddPath("", []*bgptable.Path{path}); err != nil {
+		paths := []*bgptable.Path{path}
+		if err = s.updatePrefixSet(paths); err != nil {
+			return err
+		}
+		if _, err := s.bgpServer.AddPath("", paths); err != nil {
 			return err
 		}
 		log.Printf("add path: %s", path)
 	}
 }
 
+// watchBGPConfig watches etcd path /calico/bgp/v1 and handle various changes
+// in etcd. Though this method tries to minimize effects to the existing BGP peers,
+// when /calico/bgp/v1/host/$NODENAME or /calico/global/as_num is changed,
+// give up handling the change and return error (this leads calico-bgp-daemon to be restarted)
 func (s *Server) watchBGPConfig() error {
 
 	neighborConfigs, err := s.getNeighborConfigs()
@@ -485,7 +522,7 @@ func (s *Server) watchBGPConfig() error {
 					return err
 				}
 				return s.bgpServer.DeleteNeighbor(n)
-			case "set":
+			case "set", "create", "update", "compareAndSwap":
 				n, err := getNeighborConfigFromPeer(res.Node, neighborType)
 				if err != nil {
 					return err
@@ -616,50 +653,61 @@ func (s *Server) watchBGPConfig() error {
 	}
 }
 
-func injectRoute(path *bgptable.Path) error {
-	nexthop := path.GetNexthop()
-	nlri := path.GetNlri()
-	var family int
-	var d string
-
-	switch f := path.GetRouteFamily(); f {
-	case bgp.RF_IPv4_UC:
-		family = netlink.FAMILY_V4
-		d = "0.0.0.0/0"
-	case bgp.RF_IPv6_UC:
-		family = netlink.FAMILY_V6
-		d = "::/0"
-	default:
-		log.Printf("only supports injecting ipv4/ipv6 unicast route: %s", f)
-		return nil
+// watchKernelRoute receives netlink route update notification and announces
+// kernel/boot routes using BGP.
+func (s *Server) watchKernelRoute() error {
+	ch := make(chan netlink.RouteUpdate)
+	err := netlink.RouteSubscribe(ch, nil)
+	if err != nil {
+		return err
 	}
-
-	dst, _ := netlink.ParseIPNet(nlri.String())
-	route := &netlink.Route{
-		Dst: dst,
-		Gw:  nexthop,
-	}
-	routes, _ := netlink.RouteList(nil, family)
-	for _, route := range routes {
-		if route.Dst != nil {
-			d = route.Dst.String()
-		}
-		if d == dst.String() {
-			err := netlink.RouteDel(&route)
+	for update := range ch {
+		if update.Table == syscall.RT_TABLE_MAIN && (update.Protocol == syscall.RTPROT_KERNEL || update.Protocol == syscall.RTPROT_BOOT) {
+			isWithdrawal := false
+			switch update.Type {
+			case syscall.RTM_DELROUTE:
+				isWithdrawal = true
+			case syscall.RTM_NEWROUTE:
+			default:
+				log.Printf("unhandled rtm type: %d", update.Type)
+				continue
+			}
+			log.Printf("kernel update: %s", update)
+			path, err := s.makePath(update.Dst.String(), isWithdrawal)
 			if err != nil {
+				return err
+			}
+			if _, err = s.bgpServer.AddPath("", []*bgptable.Path{path}); err != nil {
 				return err
 			}
 		}
 	}
-	if path.IsWithdraw {
-		log.Printf("removed route %s from kernel", nlri)
-		return nil
-	}
-	log.Printf("added route %s to kernel", nlri)
-	return netlink.RouteAdd(route)
+	return fmt.Errorf("netlink route subscription ended")
 }
 
-func (s *Server) monitorPath() error {
+// injectRoute is a helper function to inject BGP routes to linux kernel
+// TODO: multipath support
+func injectRoute(path *bgptable.Path) error {
+	nexthop := path.GetNexthop()
+	nlri := path.GetNlri()
+	dst, _ := netlink.ParseIPNet(nlri.String())
+	route := &netlink.Route{
+		Dst:      dst,
+		Gw:       nexthop,
+		Protocol: RTPROT_GOBGP,
+	}
+	if path.IsWithdraw {
+		log.Printf("removed route %s from kernel", nlri)
+		return netlink.RouteDel(route)
+	}
+	log.Printf("added route %s to kernel", nlri)
+	return netlink.RouteReplace(route)
+}
+
+// watchBGPPath watches BGP routes from other peers and inject them into
+// linux kernel
+// TODO: multipath support
+func (s *Server) watchBGPPath() error {
 	watcher := s.bgpServer.Watch(bgpserver.WatchBestPath())
 	for {
 		ev := <-watcher.Event()
@@ -676,6 +724,126 @@ func (s *Server) monitorPath() error {
 			}
 		}
 	}
+}
+
+// initialPolicySetting initialize BGP export policy.
+// this creates two prefix-sets named 'aggregated' and 'host'.
+// A route is allowed to be exported when it matches with 'aggregated' set,
+// and not allowed when it matches with 'host' set.
+func (s *Server) initialPolicySetting() error {
+	createEmptyPrefixSet := func(name string) error {
+		ps, err := bgptable.NewPrefixSet(bgpconfig.PrefixSet{PrefixSetName: name})
+		if err != nil {
+			return err
+		}
+		return s.bgpServer.AddDefinedSet(ps)
+	}
+	for _, name := range []string{aggregatedPrefixSetName, hostPrefixSetName} {
+		if err := createEmptyPrefixSet(name); err != nil {
+			return err
+		}
+	}
+	// intended to work as same as 'calico_pools' export filter of BIRD configuration
+	definition := bgpconfig.PolicyDefinition{
+		Name: "calico_aggr",
+		Statements: []bgpconfig.Statement{
+			bgpconfig.Statement{
+				Conditions: bgpconfig.Conditions{
+					MatchPrefixSet: bgpconfig.MatchPrefixSet{
+						PrefixSet: aggregatedPrefixSetName,
+					},
+				},
+				Actions: bgpconfig.Actions{
+					RouteDisposition: bgpconfig.ROUTE_DISPOSITION_ACCEPT_ROUTE,
+				},
+			},
+			bgpconfig.Statement{
+				Conditions: bgpconfig.Conditions{
+					MatchPrefixSet: bgpconfig.MatchPrefixSet{
+						PrefixSet: hostPrefixSetName,
+					},
+				},
+				Actions: bgpconfig.Actions{
+					RouteDisposition: bgpconfig.ROUTE_DISPOSITION_REJECT_ROUTE,
+				},
+			},
+		},
+	}
+	policy, err := bgptable.NewPolicy(definition)
+	if err != nil {
+		return err
+	}
+	if err = s.bgpServer.AddPolicy(policy, false); err != nil {
+		return err
+	}
+	return s.bgpServer.AddPolicyAssignment("", bgptable.POLICY_DIRECTION_EXPORT,
+		[]*bgpconfig.PolicyDefinition{&definition},
+		bgptable.ROUTE_TYPE_ACCEPT)
+}
+
+func (s *Server) updatePrefixSet(paths []*bgptable.Path) error {
+	for _, path := range paths {
+		err := s._updatePrefixSet(path.GetNlri().String(), path.IsWithdraw)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// _updatePrefixSet updates 'aggregated' and 'host' prefix-sets
+// we add the exact prefix to 'aggregated' set, and add corresponding longer
+// prefixes to 'host' set.
+//
+// e.g. prefix: "192.168.1.0/26" del: false
+//      add "192.168.1.0/26"     to 'aggregated' set
+//      add "192.168.1.0/26..32" to 'host'       set
+//
+func (s *Server) _updatePrefixSet(prefix string, del bool) error {
+	_, ipNet, err := net.ParseCIDR(prefix)
+	if err != nil {
+		return err
+	}
+	ps, err := bgptable.NewPrefixSet(bgpconfig.PrefixSet{
+		PrefixSetName: aggregatedPrefixSetName,
+		PrefixList: []bgpconfig.Prefix{
+			bgpconfig.Prefix{
+				IpPrefix: prefix,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if del {
+		err = s.bgpServer.DeleteDefinedSet(ps, false)
+	} else {
+		err = s.bgpServer.AddDefinedSet(ps)
+	}
+	if err != nil {
+		return err
+	}
+	min, _ := ipNet.Mask.Size()
+	max := 32
+	if ipNet.IP.To4() == nil {
+		max = 128
+	}
+	ps, err = bgptable.NewPrefixSet(bgpconfig.PrefixSet{
+		PrefixSetName: hostPrefixSetName,
+		PrefixList: []bgpconfig.Prefix{
+			bgpconfig.Prefix{
+				IpPrefix:        prefix,
+				MasklengthRange: fmt.Sprintf("%d..%d", min, max),
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if del {
+		return s.bgpServer.DeleteDefinedSet(ps, false)
+	}
+	return s.bgpServer.AddDefinedSet(ps)
 }
 
 func main() {
