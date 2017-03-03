@@ -193,8 +193,8 @@ func (s *Server) Serve() {
 
 }
 
-func (s *Server) getGlobalASN() (numorstring.ASNumber, error) {
-	return s.client.Config().GetGlobalASNumber()
+func (s *Server) getNodeASN() (numorstring.ASNumber, error) {
+	return s.getPeerASN(os.Getenv(NODENAME))
 }
 
 func (s *Server) getPeerASN(host string) (numorstring.ASNumber, error) {
@@ -207,14 +207,14 @@ func (s *Server) getPeerASN(host string) (numorstring.ASNumber, error) {
 	}
 	asn := node.Spec.BGP.ASNumber
 	if asn == nil {
-		return s.getGlobalASN()
+		return s.client.Config().GetGlobalASNumber()
 	}
 	return *asn, nil
 
 }
 
 func (s *Server) getGlobalConfig() (*bgpconfig.Global, error) {
-	asn, err := s.getGlobalASN()
+	asn, err := s.getNodeASN()
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func (s *Server) isMeshMode() (bool, error) {
 
 // getMeshNeighborConfigs returns the list of mesh BGP neighbor configuration struct
 func (s *Server) getMeshNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
-	globalASN, err := s.getGlobalASN()
+	globalASN, err := s.getNodeASN()
 	if err != nil {
 		return nil, err
 	}
@@ -398,10 +398,10 @@ func (s *Server) makePath(prefix string, isWithdrawal bool) (*bgptable.Path, err
 	}
 
 	if v4 {
-		nlri = bgp.NewIPAddrPrefix(uint8(masklen), prefix)
+		nlri = bgp.NewIPAddrPrefix(uint8(masklen), p.String())
 		attrs = append(attrs, bgp.NewPathAttributeNextHop(s.ipv4.String()))
 	} else {
-		nlri = bgp.NewIPv6AddrPrefix(uint8(masklen), prefix)
+		nlri = bgp.NewIPv6AddrPrefix(uint8(masklen), p.String())
 		attrs = append(attrs, bgp.NewPathAttributeMpReachNLRI(s.ipv6.String(), []bgp.AddrPrefixInterface{nlri}))
 	}
 
@@ -593,7 +593,7 @@ func (s *Server) watchBGPConfig() error {
 						return err
 					}
 				} else {
-					asn, err = s.getGlobalASN()
+					asn, err = s.getNodeASN()
 					if err != nil {
 						return err
 					}
