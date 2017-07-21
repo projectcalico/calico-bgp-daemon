@@ -103,6 +103,21 @@ func (c *ipamCache) update(node *etcd.Node, del bool) error {
 	return nil
 }
 
+func (c *ipamCache) syncsubr(n *etcd.Node) error {
+	for _, node := range n.Nodes {
+		if node.Dir {
+			if err := c.syncsubr(node); err != nil {
+				return err
+			}
+		} else {
+			if err := c.update(node, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // sync synchronizes the contents under /calico/v1/ipam
 func (c *ipamCache) sync() error {
 	res, err := c.etcdAPI.Get(context.Background(), CALICO_IPAM, &etcd.GetOptions{Recursive: true})
@@ -115,7 +130,7 @@ func (c *ipamCache) sync() error {
 		if node.ModifiedIndex > index {
 			index = node.ModifiedIndex
 		}
-		if err = c.update(node, false); err != nil {
+		if err = c.syncsubr(node); err != nil {
 			return err
 		}
 	}
