@@ -1047,7 +1047,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	rawloglevel := os.Getenv("CALICO_BGPD_LOGSEVERITYSCREEN")
+	rawloglevel := os.Getenv("CALICO_BGP_LOGSEVERITYSCREEN")
 	loglevel := log.InfoLevel
 	if rawloglevel != "" {
 		loglevel, err = log.ParseLevel(rawloglevel)
