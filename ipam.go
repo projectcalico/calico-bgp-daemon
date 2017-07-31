@@ -22,8 +22,8 @@ import (
 	"sync"
 
 	etcd "github.com/coreos/etcd/client"
-	log "github.com/Sirupsen/logrus"
 	"github.com/osrg/gobgp/table"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 

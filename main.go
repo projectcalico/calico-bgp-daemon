@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	etcd "github.com/coreos/etcd/client"
 	"github.com/coreos/etcd/pkg/transport"
 	bgpapi "github.com/osrg/gobgp/api"
@@ -37,6 +36,7 @@ import (
 	calicocli "github.com/projectcalico/libcalico-go/lib/client"
 	"github.com/projectcalico/libcalico-go/lib/numorstring"
 	calicoscope "github.com/projectcalico/libcalico-go/lib/scope"
+	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/net/context"
 	"gopkg.in/tomb.v2"
@@ -887,7 +887,7 @@ func (s *Server) injectRoute(path *bgptable.Path) error {
 // linux kernel
 // TODO: multipath support
 func (s *Server) watchBGPPath() error {
-	watcher := s.bgpServer.Watch(bgpserver.WatchBestPath())
+	watcher := s.bgpServer.Watch(bgpserver.WatchBestPath(false))
 	for {
 		var paths []*bgptable.Path
 		select {
