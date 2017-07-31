@@ -18,11 +18,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 
 	etcd "github.com/coreos/etcd/client"
+	log "github.com/Sirupsen/logrus"
 	"github.com/osrg/gobgp/table"
 	"golang.org/x/net/context"
 )

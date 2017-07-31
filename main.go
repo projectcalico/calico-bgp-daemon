@@ -19,14 +19,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/Sirupsen/logrus"
+	log "github.com/Sirupsen/logrus"
 	etcd "github.com/coreos/etcd/client"
 	"github.com/coreos/etcd/pkg/transport"
 	bgpapi "github.com/osrg/gobgp/api"
@@ -1048,7 +1047,16 @@ func main() {
 		os.Exit(0)
 	}
 
-	logrus.SetLevel(logrus.InfoLevel)
+	rawloglevel := os.Getenv("CALICO_BGPD_LOGSEVERITYSCREEN")
+	loglevel := log.InfoLevel
+	if rawloglevel != "" {
+		loglevel, err = log.ParseLevel(rawloglevel)
+		if err != nil {
+			log.WithError(err).Error("Failed to parse loglevel, defaulting to info.")
+			loglevel = log.InfoLevel
+		}
+	}
+	log.SetLevel(loglevel)
 
 	server, err := NewServer()
 	if err != nil {
