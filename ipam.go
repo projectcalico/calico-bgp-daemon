@@ -126,6 +126,7 @@ func (c *ipamCache) sync() error {
 	}
 
 	var index uint64
+	index = res.Index
 	for _, node := range res.Node.Nodes {
 		if node.ModifiedIndex > index {
 			index = node.ModifiedIndex
