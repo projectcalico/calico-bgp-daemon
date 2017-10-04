@@ -530,12 +530,16 @@ func (s *Server) makePath(prefix string, isWithdrawal bool) (*bgptable.Path, err
 // list of BGP path.
 // using etcd directly since libcalico-go doesn't seem to have a method to return
 // assigned prefixes yet.
-func (s *Server) getAssignedPrefixes(api etcd.KeysAPI) ([]*bgptable.Path, error) {
+func (s *Server) getAssignedPrefixes(api etcd.KeysAPI) ([]*bgptable.Path, uint64, error) {
 	var ps []*bgptable.Path
+	var index uint64
 	f := func(version string) error {
 		res, err := api.Get(context.Background(), fmt.Sprintf("%s/%s/%s/block", CALICO_AGGR, os.Getenv(NODENAME), version), &etcd.GetOptions{Recursive: true})
 		if err != nil {
 			return err
+		}
+		if index == 0 {
+		        index = res.Index
 		}
 		for _, v := range res.Node.Nodes {
 			path, err := s.makePath(etcdKeyToPrefix(v.Key), false)
@@ -548,15 +552,15 @@ func (s *Server) getAssignedPrefixes(api etcd.KeysAPI) ([]*bgptable.Path, error)
 	}
 	if s.ipv4 != nil {
 		if err := f("ipv4"); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	if s.ipv6 != nil {
 		if err := f("ipv6"); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
-	return ps, nil
+	return ps, index, nil
 }
 
 // watchPrefix watches etcd /calico/ipam/v2/host/$NODENAME and add/delete
@@ -564,7 +568,7 @@ func (s *Server) getAssignedPrefixes(api etcd.KeysAPI) ([]*bgptable.Path, error)
 // This function also updates policy appropriately.
 func (s *Server) watchPrefix() error {
 
-	paths, err := s.getAssignedPrefixes(s.etcd)
+	paths, index, err := s.getAssignedPrefixes(s.etcd)
 	if err != nil {
 		return err
 	}
@@ -577,7 +581,7 @@ func (s *Server) watchPrefix() error {
 		return err
 	}
 
-	watcher := s.etcd.Watcher(fmt.Sprintf("%s/%s", CALICO_AGGR, os.Getenv(NODENAME)), &etcd.WatcherOptions{Recursive: true})
+	watcher := s.etcd.Watcher(fmt.Sprintf("%s/%s", CALICO_AGGR, os.Getenv(NODENAME)), &etcd.WatcherOptions{Recursive: true, AfterIndex: index})
 	for {
 		var err error
 		res, err := watcher.Next(context.Background())
@@ -610,6 +614,12 @@ func (s *Server) watchPrefix() error {
 // when /calico/bgp/v1/host/$NODENAME or /calico/global/as_num is changed,
 // give up handling the change and return error (this leads calico-bgp-daemon to be restarted)
 func (s *Server) watchBGPConfig() error {
+	var index uint64
+	res, err := s.etcd.Get(context.Background(), CALICO_BGP, nil)
+	if err != nil {
+		return err
+	}
+	index = res.Index
 
 	neighborConfigs, err := s.getNeighborConfigs()
 	if err != nil {
@@ -622,9 +632,7 @@ func (s *Server) watchBGPConfig() error {
 		}
 	}
 
-	watcher := s.etcd.Watcher(fmt.Sprintf("%s", CALICO_BGP), &etcd.WatcherOptions{
-		Recursive: true,
-	})
+	watcher := s.etcd.Watcher(CALICO_BGP, &etcd.WatcherOptions{Recursive: true, AfterIndex: index})
 	for {
 		res, err := watcher.Next(context.Background())
 		if err != nil {
