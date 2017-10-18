@@ -1,0 +1,8 @@
+FROM ppc64le/alpine:3.6
+
+MAINTAINER Gunjan Patel <gunjan@tigera.io>
+
+ADD dist/ppc64le/gobgp /gobgp
+ADD dist/ppc64le/calico-bgp-daemon /calico-bgp-daemon
+
+ENTRYPOINT ["/calico-bgp-daemon"]
