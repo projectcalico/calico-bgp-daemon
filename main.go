@@ -166,6 +166,7 @@ type Server struct {
 	ipv6      net.IP
 	ipam      IpamCache
 	reloadCh  chan []*bgptable.Path
+	prefixReady chan int
 }
 
 func NewServer() (*Server, error) {
@@ -205,6 +206,7 @@ func NewServer() (*Server, error) {
 		ipv4:      ipv4,
 		ipv6:      ipv6,
 		reloadCh:  make(chan []*bgptable.Path),
+		prefixReady: make(chan int),
 	}
 
 	if datastoreType == calicoapi.EtcdV2 {
@@ -626,6 +628,7 @@ func (s *Server) watchPrefix() error {
 	if _, err := s.bgpServer.AddPath("", paths); err != nil {
 		return err
 	}
+	s.prefixReady <- 1
 
 	watcher := s.etcd.Watcher(fmt.Sprintf("%s/%s", CALICO_AGGR, os.Getenv(NODENAME)), &etcd.WatcherOptions{Recursive: true, AfterIndex: index})
 	for {
@@ -842,14 +845,24 @@ func (s *Server) watchBGPConfig() error {
 // watchKernelRoute receives netlink route update notification and announces
 // kernel/boot routes using BGP.
 func (s *Server) watchKernelRoute() error {
+	err := s.loadKernelRoute()
+	if err != nil {
+		return err
+	}
+
 	ch := make(chan netlink.RouteUpdate)
-	err := netlink.RouteSubscribe(ch, nil)
+	err = netlink.RouteSubscribe(ch, nil)
 	if err != nil {
 		return err
 	}
 	for update := range ch {
 		log.Printf("kernel update: %s", update)
 		if update.Table == syscall.RT_TABLE_MAIN && (update.Protocol == syscall.RTPROT_KERNEL || update.Protocol == syscall.RTPROT_BOOT) {
+			// TODO: handle ipPool deletion. RTM_DELROUTE message
+			// can belong to previously valid ipPool.
+			if s.ipam.match(update.Dst.String()) == nil {
+				continue
+			}
 			isWithdrawal := false
 			switch update.Type {
 			case syscall.RTM_DELROUTE:
@@ -886,6 +899,36 @@ func (s *Server) watchKernelRoute() error {
 	return fmt.Errorf("netlink route subscription ended")
 }
 
+func (s *Server) loadKernelRoute() error {
+	<-s.prefixReady
+	filter := &netlink.Route{
+		Table: syscall.RT_TABLE_MAIN,
+	}
+	list, err := netlink.RouteListFiltered(netlink.FAMILY_V4, filter, netlink.RT_FILTER_TABLE)
+	if err != nil {
+		return err
+	}
+	for _, route := range list {
+		if route.Dst == nil {
+			continue
+		}
+		if s.ipam.match(route.Dst.String()) == nil {
+			continue
+		}
+		if (route.Protocol == syscall.RTPROT_KERNEL || route.Protocol == syscall.RTPROT_BOOT) {
+			path, err := s.makePath(route.Dst.String(), false)
+			if err != nil {
+				return err
+			}
+			log.Printf("made path from kernel route: %s", path)
+			if _, err = s.bgpServer.AddPath("", []*bgptable.Path{path}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // injectRoute is a helper function to inject BGP routes to linux kernel
 // TODO: multipath support
 func (s *Server) injectRoute(path *bgptable.Path) error {
@@ -920,6 +963,7 @@ func (s *Server) injectRoute(path *bgptable.Path) error {
 				route.SetFlag(netlink.FLAG_ONLINK)
 			}
 		}
+		// TODO: if !IsWithdraw, we'd ignore that
 	}
 
 	if path.IsWithdraw {

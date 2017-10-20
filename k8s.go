@@ -179,6 +179,7 @@ func (c *k8sClient) updatePrefix() error {
 	if _, err := c.server.bgpServer.AddPath("", paths); err != nil {
 		return err
 	}
+	c.server.prefixReady <- 1
 	return nil
 }
 
