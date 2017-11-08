@@ -1,6 +1,11 @@
-hash: 75e3ff856f410b7511a49591c9692cb2c1f3e84e8f75bb8f05822df266984a59
-updated: 2017-08-03T11:14:40.839484276-07:00
+hash: a11c390e4326539e32a54ef6e71fbe5fae8adf7f6a836bb4a8ae4b81dc13efd0
+updated: 2017-10-04T00:59:10.714193307Z
 imports:
+- name: cloud.google.com/go
+  version: 3b1ae45394a234c385be014e9a488f2bb6eef821
+  subpackages:
+  - compute/metadata
+  - internal
 - name: github.com/armon/go-radix
   version: 4239b77079c7b5d1243b7b4736304ce8ddb6f0f2
 - name: github.com/coreos/etcd
@@ -12,6 +17,14 @@ imports:
   - pkg/tlsutil
   - pkg/transport
   - pkg/types
+- name: github.com/coreos/go-oidc
+  version: be73733bb8cc830d0205609b95d125215f8e9c70
+  subpackages:
+  - http
+  - jose
+  - key
+  - oauth2
+  - oidc
 - name: github.com/coreos/go-systemd
   version: 48702e0da86bd25e76cfef347e2adeb434a0d0a6
   subpackages:
@@ -22,8 +35,11 @@ imports:
   version: 3ac0863d7acf3bc44daf49afef8919af12f704ef
   subpackages:
   - capnslog
+  - health
+  - httputil
+  - timeutil
 - name: github.com/davecgh/go-spew
-  version: 346938d642f2ec3594ed81d874461961cd0faa76
+  version: 5215b55f46b2b919f50a1df0eaa5886afe4e3b3d
   subpackages:
   - spew
 - name: github.com/docker/distribution
@@ -87,6 +103,8 @@ imports:
   - client/v2
   - models
   - pkg/escape
+- name: github.com/jonboulle/clockwork
+  version: 2eee05ed794112d45db504eb05aa693efd2b8b09
 - name: github.com/juju/ratelimit
   version: 77ed1c8a01217656d2080ad51981f6e99adaa177
 - name: github.com/kelseyhightower/envconfig
@@ -126,7 +144,7 @@ imports:
 - name: github.com/projectcalico/go-yaml-wrapper
   version: 598e54215bee41a19677faa4f0c32acd2a87eb56
 - name: github.com/projectcalico/libcalico-go
-  version: 93f9e49214a678551648eb9c28ce57bc286a3169
+  version: 09904c3edaef8e571a38cba4195d555537b8fcc2
   subpackages:
   - lib/api
   - lib/api/unversioned
@@ -135,8 +153,8 @@ imports:
   - lib/backend/compat
   - lib/backend/etcd
   - lib/backend/k8s
+  - lib/backend/k8s/custom
   - lib/backend/k8s/resources
-  - lib/backend/k8s/thirdparty
   - lib/backend/model
   - lib/client
   - lib/converter
@@ -191,12 +209,20 @@ imports:
   version: f2499483f923065a842d38eb4c7f1927e6fc6e6d
   subpackages:
   - context
+  - context/ctxhttp
   - http2
   - http2/hpack
   - idna
   - internal/timeseries
   - lex/httplex
   - trace
+- name: golang.org/x/oauth2
+  version: 3c3a985cb79f52a3190fbc056984415ca6763d01
+  subpackages:
+  - google
+  - internal
+  - jws
+  - jwt
 - name: golang.org/x/sys
   version: 8f0908ab3b2457e2e15403d3697c9ef5cb4b57a9
   subpackages:
@@ -215,6 +241,18 @@ imports:
   - unicode/bidi
   - unicode/norm
   - width
+- name: google.golang.org/appengine
+  version: 4f7eeb5305a4ba1966344836ba4af9996b7b4e05
+  subpackages:
+  - internal
+  - internal/app_identity
+  - internal/base
+  - internal/datastore
+  - internal/log
+  - internal/modules
+  - internal/remote_api
+  - internal/urlfetch
+  - urlfetch
 - name: google.golang.org/grpc
   version: 777daa17ff9b5daef1cfdf915088a2ada3332bf0
   subpackages:
@@ -305,10 +343,7 @@ imports:
   - kubernetes/typed/storage/v1
   - kubernetes/typed/storage/v1beta1
   - pkg/api
-  - pkg/api/errors
   - pkg/api/install
-  - pkg/api/meta
-  - pkg/api/unversioned
   - pkg/api/v1
   - pkg/apis/apps
   - pkg/apis/apps/install
@@ -349,17 +384,15 @@ imports:
   - pkg/apis/storage/install
   - pkg/apis/storage/v1
   - pkg/apis/storage/v1beta1
-  - pkg/fields
-  - pkg/runtime
-  - pkg/runtime/schema
-  - pkg/runtime/serializer
   - pkg/util
   - pkg/util/parsers
-  - pkg/util/wait
   - pkg/version
-  - pkg/watch
+  - plugin/pkg/client/auth
+  - plugin/pkg/client/auth/gcp
+  - plugin/pkg/client/auth/oidc
   - rest
   - rest/watch
+  - third_party/forked/golang/template
   - tools/auth
   - tools/cache
   - tools/clientcmd
@@ -373,4 +406,5 @@ imports:
   - util/flowcontrol
   - util/homedir
   - util/integer
+  - util/jsonpath
 testImports: []
