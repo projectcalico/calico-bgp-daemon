@@ -56,11 +56,20 @@ type ipamCache struct {
 	m             map[string]*ipPool
 	etcdAPI       etcd.KeysAPI
 	updateHandler func(*ipPool) error
+	ready         bool
+	readyCond     *sync.Cond
 }
 
 // match checks whether we have an IP pool which contains the given prefix.
 // If we have, it returns the pool.
 func (c *ipamCache) match(prefix string) *ipPool {
+	if !c.ready {
+		c.readyCond.L.Lock()
+		for !c.ready {
+			c.readyCond.Wait()
+		}
+		c.readyCond.L.Unlock()
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, p := range c.m {
@@ -140,6 +149,8 @@ func (c *ipamCache) sync() error {
 			return err
 		}
 	}
+	c.ready = true
+	c.readyCond.Broadcast()
 
 	watcher := c.etcdAPI.Watcher(CALICO_IPAM, &etcd.WatcherOptions{Recursive: true, AfterIndex: index})
 	for {
@@ -167,9 +178,11 @@ func (c *ipamCache) sync() error {
 
 // create new IPAM cache
 func newIPAMCache(api etcd.KeysAPI, updateHandler func(*ipPool) error) *ipamCache {
+	cond := sync.NewCond(&sync.Mutex{})
 	return &ipamCache{
 		m:             make(map[string]*ipPool),
 		updateHandler: updateHandler,
 		etcdAPI:       api,
+		readyCond:     cond,
 	}
 }
