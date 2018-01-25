@@ -1,12 +1,5 @@
 package: github.com/projectcalico/calico-bgp-daemon
 import:
-- package: github.com/sirupsen/logrus
-  version: v0.11.2
-- package: github.com/coreos/etcd
-  version: v3.1.1
-  subpackages:
-  - client
-  - pkg/transport
 - package: github.com/osrg/gobgp
   version: v1.22
   subpackages:
@@ -16,16 +9,23 @@ import:
   - server
   - table
 - package: github.com/projectcalico/libcalico-go
-  version: v1.6.1
+  version: 7c2de5ed8c029f222d87fc849b54c4075ef3173f
   subpackages:
-  - lib/api
-  - lib/client
+  - lib/apiconfig
+  - lib/apis/v3
+  - lib/backend/api
+  - lib/backend/model
+  - lib/backend/syncersv1/bgpsyncer
+  - lib/clientv3
+  - lib/errors
   - lib/numorstring
-  - lib/scope
+  - lib/options
+- package: github.com/sirupsen/logrus
+  version: ^1.0.3
 - package: github.com/vishvananda/netlink
 - package: golang.org/x/net
   subpackages:
   - context
 - package: gopkg.in/tomb.v2
-- package: k8s.io/client-go
-  version: 4a3ab2f5be5177366f8206fd79ce55ca80e417fa
+- package: golang.org/x/text
+  version: b19bf474d317b857955b12035d2c5acb57ce8b01

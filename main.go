@@ -1,4 +1,4 @@
-// Copyright (C) 2016-2017 Nippon Telegraph and Telephone Corporation.
+// Copyright (C) 2016-2018 Nippon Telegraph and Telephone Corporation.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,30 +16,24 @@
 package main
 
 import (
-	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	etcd "github.com/coreos/etcd/client"
-	"github.com/coreos/etcd/pkg/transport"
-	bgpapi "github.com/osrg/gobgp/api"
-	bgpconfig "github.com/osrg/gobgp/config"
-	bgp "github.com/osrg/gobgp/packet/bgp"
+	svbgpapi "github.com/osrg/gobgp/api"
+	svbgpconfig "github.com/osrg/gobgp/config"
+	svbgp "github.com/osrg/gobgp/packet/bgp"
 	bgpserver "github.com/osrg/gobgp/server"
 	bgptable "github.com/osrg/gobgp/table"
-	calicoapi "github.com/projectcalico/libcalico-go/lib/api"
-	calicocli "github.com/projectcalico/libcalico-go/lib/client"
+	"github.com/projectcalico/libcalico-go/lib/apiconfig"
 	"github.com/projectcalico/libcalico-go/lib/numorstring"
-	calicoscope "github.com/projectcalico/libcalico-go/lib/scope"
 	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
-	"golang.org/x/net/context"
 	"gopkg.in/tomb.v2"
 )
 
@@ -59,19 +53,35 @@ const (
 	GlobalLogging  = GlobalBGP + "/loglevel"
 	AllNodes       = CALICO_BGP + "/host"
 
-	PollingInterval    = 300
-	defaultDialTimeout = 30 * time.Second
+	KeyIPV4   = "ip_addr_v4"
+	KeyIPV6   = "ip_addr_v6"
+	KeyIPV4NW = "network_v4"
+	KeyIPV6NW = "network_v6"
+
+	DefaultASN         = "64512"
+	GlobalNodeMeshTrue = `{"enabled":true}`
 
 	aggregatedPrefixSetName = "aggregated"
 	hostPrefixSetName       = "host"
 
+	ProcNum       = 3
+	ProcBGPConfig = 0
+	ProcAGGR      = 1
+	ProcIPAM      = 2
+
 	RTPROT_GOBGP = 0x11
+
+	Act_Add  = "add"
+	Act_Upd  = "upd"
+	Act_Del  = "del"
+	Act_Same = "same"
 )
 
-type IpamCache interface {
-	match(string) *ipPool
-	update(interface{}, bool) error
-	sync() error
+type Processor interface {
+	GetPrefixes() []string
+	SetCache(last map[string]string, curr map[string]string)
+	InitialSetting() error
+	Process(acts map[string]map[string][]string) error
 }
 
 // VERSION is filled out during the build process (using git describe output)
@@ -87,32 +97,78 @@ func underscore(ip string) string {
 	}, ip)
 }
 
-func errorButKeyNotFound(err error) error {
-	if e, ok := err.(etcd.Error); ok && e.Code == etcd.ErrorCodeKeyNotFound {
-		return nil
+// CompareCache return results compared the current cache with
+// the last cache.
+//     {Act_Add: {key1: {current-val1}, key2: {current-val2}, ...},
+//      Act_Upd: {key1: {current-val1, last-val1}, ...},
+//      Act_Del: {key1: {current-val1}, key2: {current-val2}, ...}}
+func CompareCache(lasts map[string]string, currs map[string]string) map[string]map[string][]string {
+	acts := map[string]map[string][]string{
+		Act_Add: make(map[string][]string),
+		Act_Upd: make(map[string][]string),
+		Act_Del: make(map[string][]string),
 	}
-	return err
+	same := make(map[string][]string)
+	for key, last := range lasts {
+		if cur, ok := currs[key]; ok == false {
+			acts[Act_Del][key] = []string{last}
+		} else if last != cur {
+			acts[Act_Upd][key] = []string{cur, last}
+		} else {
+			same[key] = []string{cur}
+		}
+	}
+	for key, cur := range currs {
+		if _, ok := lasts[key]; ok == false {
+			acts[Act_Add][key] = []string{cur}
+		}
+	}
+	log.Debugf("results compared current with last cache: %v", acts)
+	log.Debugf("same data of current and last cache: %v", same)
+	return acts
 }
 
-func getEtcdConfig(cfg *calicoapi.CalicoAPIConfig) (etcd.Config, error) {
-	var config etcd.Config
-	etcdcfg := cfg.Spec.EtcdConfig
-	etcdEndpoints := etcdcfg.EtcdEndpoints
-	if etcdEndpoints == "" {
-		etcdEndpoints = fmt.Sprintf("%s://%s", etcdcfg.EtcdScheme, etcdcfg.EtcdAuthority)
+// MatchesPrefix returns true if the key matches any of the supplied prefixes.
+func MatchesPrefix(key string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
 	}
-	tls := transport.TLSInfo{
-		CAFile:   etcdcfg.EtcdCACertFile,
-		CertFile: etcdcfg.EtcdCertFile,
-		KeyFile:  etcdcfg.EtcdKeyFile,
+	return false
+}
+
+// GetValuesLocalCache returns values for the required set of prefixes
+// from a specified cache.
+func GetValuesLocalCache(cache map[string]string, keys []string) (map[string]string, error) {
+	log.Debugf("Requesting values for keys: %v", keys)
+	values := make(map[string]string)
+	for k, v := range cache {
+		if MatchesPrefix(k, keys) {
+			values[k] = v
+		}
 	}
-	t, err := transport.NewTransport(tls, defaultDialTimeout)
-	if err != nil {
-		return config, err
+	log.Debugf("Returning vlues: %#v", values)
+	return values, nil
+}
+
+// GetNodeMap returns a set of key/value for each node.
+//     {node1: {key1: val1, key2: val2, ...},
+//      node2: {key1: val1, key2: val2, ...},
+//      ...}
+func GetNodeMap(values map[string]string) map[string]map[string]string {
+	nodes := make(map[string]map[string]string)
+	for key, value := range values {
+		elems := strings.Split(key, "/")
+		host := elems[len(elems)-2]
+		key := elems[len(elems)-1]
+		if _, ok := nodes[host]; ok == false {
+			nodes[host] = make(map[string]string)
+		}
+		nodes[host][key] = value
 	}
-	config.Endpoints = strings.Split(etcdEndpoints, ",")
-	config.Transport = t
-	return config, nil
+	log.Debugf("node map: %v", nodes)
+	return nodes
 }
 
 // recursiveNexthopLookup returns bgpNexthop's actual nexthop
@@ -157,88 +213,66 @@ func cleanUpRoutes() error {
 }
 
 type Server struct {
-	t           tomb.Tomb
-	bgpServer   *bgpserver.BgpServer
-	datastore   calicoapi.DatastoreType
-	client      *calicocli.Client
-	etcd        etcd.KeysAPI
-	process     *IntervalProcessor
-	ipv4        net.IP
-	ipv6        net.IP
-	ipam        IpamCache
-	reloadCh    chan []*bgptable.Path
-	prefixReady chan int
+	t          tomb.Tomb
+	BgpServer  *bgpserver.BgpServer
+	Client     StoreClient
+	NodeName   string
+	ipv4       string
+	ipv6       string
+	reloadCh   chan []*bgptable.Path
+	processors [ProcNum]Processor
+	ipam       *IpamCache
 }
 
 func NewServer() (*Server, error) {
-	config, err := calicocli.LoadClientConfigFromEnvironment()
-	if err != nil {
-		return nil, err
-	}
-
-	calicoCli, err := calicocli.New(*config)
-	if err != nil {
-		return nil, err
-	}
-
-	node, err := calicoCli.Nodes().Get(calicoapi.NodeMetadata{Name: os.Getenv(NODENAME)})
-	if err != nil {
-		return nil, err
-	}
-
-	if node.Spec.BGP == nil {
-		return nil, fmt.Errorf("Calico is running in policy-only mode")
-	}
-	var ipv4, ipv6 net.IP
-	if ipnet := node.Spec.BGP.IPv4Address; ipnet != nil {
-		ipv4 = ipnet.IP
-	}
-	if ipnet := node.Spec.BGP.IPv6Address; ipnet != nil {
-		ipv6 = ipnet.IP
-	}
-
+	nodeName := os.Getenv("NODENAME")
 	bgpServer := bgpserver.NewBgpServer()
-
-	datastoreType := config.Spec.DatastoreType
 	server := Server{
-		bgpServer:   bgpServer,
-		datastore:   datastoreType,
-		client:      calicoCli,
-		ipv4:        ipv4,
-		ipv6:        ipv6,
-		reloadCh:    make(chan []*bgptable.Path),
-		prefixReady: make(chan int),
+		BgpServer: bgpServer,
+		NodeName:  nodeName,
+		reloadCh:  make(chan []*bgptable.Path),
 	}
 
-	if datastoreType == calicoapi.EtcdV2 {
-		etcdConfig, err := getEtcdConfig(config)
-		if err != nil {
-			return nil, err
-		}
-		cli, err := etcd.New(etcdConfig)
-		if err != nil {
-			return nil, err
-		}
-		server.etcd = etcd.NewKeysAPI(cli)
-	} else if datastoreType == calicoapi.Kubernetes {
-		k8s, err := NewK8sClient(&server)
-		if err != nil {
-			return nil, err
-		}
-		ipam := NewIPAMCacheK8s(&server, server.ipamUpdateHandler)
-		server.ipam = ipam
-		interval := PollingInterval
-		i, err := strconv.Atoi(os.Getenv(INTERVAL))
-		if err == nil {
-			interval = i
-		}
-		server.process = &IntervalProcessor{
-			interval: interval,
-			k8scli:   k8s,
-			ipam:     ipam,
-		}
-	} else {
-		log.Fatal("unsupported datastore type: ", datastoreType)
+	config, err := apiconfig.LoadClientConfigFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	storeClient, err := NewDataStore(*config)
+	if err != nil {
+		return nil, err
+	}
+	server.Client = storeClient
+
+	processors := [ProcNum]Processor{
+		ProcBGPConfig: NewBGPConfig(&server),
+		ProcAGGR:      NewAGGR(&server),
+		ProcIPAM:      NewIPAMCache(&server, server.ipamUpdateHandler),
+	}
+	server.ipam = processors[ProcIPAM].(*IpamCache)
+	watchprefixes := []string{}
+	for _, p := range processors {
+		watchprefixes = append(watchprefixes, p.GetPrefixes()...)
+	}
+	if err := storeClient.SetPrefixes(watchprefixes); err != nil {
+		return nil, err
+	}
+	server.processors = processors
+
+	values, err := server.GetNode(nil, nodeName)
+	if err != nil {
+		return nil, err
+	}
+	ipv4, ok := values[fmt.Sprintf("%s/%s/%s", AllNodes, nodeName, KeyIPV4)]
+	if ok {
+		server.ipv4 = ipv4
+	}
+	ipv6, ok := values[fmt.Sprintf("%s/%s/%s", AllNodes, nodeName, KeyIPV6)]
+	if ok {
+		server.ipv6 = ipv6
+	}
+
+	if server.ipv4 == "" && server.ipv6 == "" {
+		return nil, fmt.Errorf("Calico is running in policy-only mode")
 	}
 
 	return &server, nil
@@ -246,19 +280,19 @@ func NewServer() (*Server, error) {
 
 func (s *Server) Serve() {
 	s.t.Go(func() error {
-		s.bgpServer.Serve()
+		s.BgpServer.Serve()
 		return nil
 	})
 
-	bgpAPIServer := bgpapi.NewGrpcServer(s.bgpServer, ":50051")
+	bgpAPIServer := svbgpapi.NewGrpcServer(s.BgpServer, ":50051")
 	s.t.Go(bgpAPIServer.Serve)
 
-	globalConfig, err := s.getGlobalConfig()
+	globalConfig, err := s.getBGPDGlobalConfig()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err := s.bgpServer.Start(globalConfig); err != nil {
+	if err := s.BgpServer.Start(globalConfig); err != nil {
 		log.Fatal("failed to start BGP server:", err)
 	}
 
@@ -266,17 +300,15 @@ func (s *Server) Serve() {
 		log.Fatal(err)
 	}
 
-	if s.datastore == calicoapi.EtcdV2 {
-		s.ipam = newIPAMCache(s.etcd, s.ipamUpdateHandler)
-		// sync IPAM and call ipamUpdateHandler
-		s.t.Go(func() error { return fmt.Errorf("syncIPAM: %s", s.ipam.sync()) })
-		// watch prefix assigned and announce to other BGP peers
-		s.t.Go(func() error { return fmt.Errorf("watchPrefix: %s", s.watchPrefix()) })
-		// watch BGP configuration
-		s.t.Go(func() error { return fmt.Errorf("watchBGPConfig: %s", s.watchBGPConfig()) })
-	} else if s.datastore == calicoapi.Kubernetes {
-		s.t.Go(func() error { return fmt.Errorf("k8s interval loop: %s", s.process.IntervalLoop()) })
+	for _, p := range s.processors {
+		if err := p.InitialSetting(); err != nil {
+			log.Fatalf("failed to execute initial process %#v err:%s", p, err)
+		}
 	}
+	// watch changes for /calico/bgp/v1, /calico/ipam/v2/host,
+	// /calico/v1/ipam prefix.
+	s.t.Go(func() error { return fmt.Errorf("watchPrefix: %s", s.watchPrefix()) })
+
 	// watch routes from other BGP peers and update FIB
 	s.t.Go(func() error { return fmt.Errorf("watchBGPPath: %s", s.watchBGPPath()) })
 
@@ -292,13 +324,70 @@ func (s *Server) Serve() {
 
 }
 
-func isCrossSubnet(gw net.IP, subnet net.IPNet) bool {
-	p := &ipPool{CIDR: subnet.String()}
-	result := !p.contain(gw.String() + "/32")
+func (s *Server) watchPrefix() error {
+	var err error
+	var revision uint64
+	var last map[string]string
+	var curr map[string]string
+	var acts map[string]map[string][]string
+
+	log.Debugf("Run watchPrefix start revision: %d", revision)
+	watchprefixes := []string{}
+	for _, p := range s.processors {
+		watchprefixes = append(watchprefixes, p.GetPrefixes()...)
+	}
+	log.Debugf("Watch prefix: %s", watchprefixes)
+	for {
+		err = s.Client.WatchPrefix(watchprefixes, revision)
+		if err != nil {
+			log.Errorf("Watch prefixes: %s", watchprefixes)
+			return err
+		}
+		revision = s.Client.GetCurrentRevision()
+		log.Debugf("run watchPrefix revision: %d", revision)
+		last, curr = s.Client.SyncCache()
+		if last == nil {
+			continue
+		}
+		acts = CompareCache(last, curr)
+		for _, p := range s.processors {
+			log.Debugf("Process compared results: %#v", p)
+			p.SetCache(last, curr)
+			err = p.Process(acts)
+			if err != nil {
+				log.Errorf("watchPrefix: err=%s Process %#v", err, p)
+				return err
+			}
+		}
+	}
+}
+
+func (s *Server) GetValues(cache map[string]string, keys []string) (map[string]string, error) {
+	var err error
+	values := make(map[string]string)
+	if cache == nil {
+		values, err = s.Client.GetValues(keys)
+	} else {
+		values, err = GetValuesLocalCache(cache, keys)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func (s *Server) GetNode(cache map[string]string, nodeName string) (map[string]string, error) {
+	prefixes := []string{fmt.Sprintf("%s/%s", AllNodes, nodeName)}
+	return s.GetValues(cache, prefixes)
+}
+
+func isCrossSubnet(gw net.IP, subnet string) bool {
+	p := &IpPool{CIDR: subnet}
+	result := !p.Contain(gw.String() + "/32")
 	return result
 }
 
-func (s *Server) ipamUpdateHandler(pool *ipPool) error {
+func (s *Server) ipamUpdateHandler(pool *IpPool) error {
 	filter := &netlink.Route{
 		Protocol: RTPROT_GOBGP,
 	}
@@ -306,9 +395,13 @@ func (s *Server) ipamUpdateHandler(pool *ipPool) error {
 	if err != nil {
 		return err
 	}
-	node, err := s.client.Nodes().Get(calicoapi.NodeMetadata{Name: os.Getenv(NODENAME)})
+	values, err := s.GetNode(nil, s.NodeName)
 	if err != nil {
 		return err
+	}
+	ipv4, ok := values[fmt.Sprintf("%s/%s/%s", AllNodes, s.NodeName, KeyIPV4NW)]
+	if ok == false || ipv4 == "" {
+		return errors.New("ip address not found")
 	}
 
 	for _, route := range list {
@@ -316,9 +409,9 @@ func (s *Server) ipamUpdateHandler(pool *ipPool) error {
 			continue
 		}
 		prefix := route.Dst.String()
-		if pool.contain(prefix) {
+		if pool.Contain(prefix) {
 			ipip := pool.IPIP != ""
-			if pool.Mode == "cross-subnet" && !isCrossSubnet(route.Gw, node.Spec.BGP.IPv4Address.Network().IPNet) {
+			if pool.Mode == "cross-subnet" && !isCrossSubnet(route.Gw, ipv4) {
 				ipip = false
 			}
 			if ipip {
@@ -329,7 +422,7 @@ func (s *Server) ipamUpdateHandler(pool *ipPool) error {
 				route.LinkIndex = i.Index
 				route.SetFlag(netlink.FLAG_ONLINK)
 			} else {
-				tbl, err := s.bgpServer.GetRib("", bgp.RF_IPv4_UC, []*bgptable.LookupPrefix{
+				tbl, err := s.BgpServer.GetRib("", svbgp.RF_IPv4_UC, []*bgptable.LookupPrefix{
 					&bgptable.LookupPrefix{
 						Prefix: prefix,
 					},
@@ -369,193 +462,44 @@ func (s *Server) ipamUpdateHandler(pool *ipPool) error {
 	return nil
 }
 
-func (s *Server) getNodeASN() (numorstring.ASNumber, error) {
-	return s.getPeerASN(os.Getenv(NODENAME))
+func (s *Server) GetNodeASN(cache map[string]string) (numorstring.ASNumber, error) {
+	return s.GetPeerASN(cache, s.NodeName)
 }
 
-func (s *Server) getPeerASN(host string) (numorstring.ASNumber, error) {
-	node, err := s.client.Nodes().Get(calicoapi.NodeMetadata{Name: host})
+func (s *Server) GetPeerASN(cache map[string]string, host string) (numorstring.ASNumber, error) {
+	values, err := s.GetNode(cache, s.NodeName)
 	if err != nil {
 		return 0, err
 	}
-	if node.Spec.BGP == nil {
-		return 0, fmt.Errorf("host %s is running in policy-only mode")
-	}
-	asn := node.Spec.BGP.ASNumber
-	if asn == nil {
-		return s.client.Config().GetGlobalASNumber()
-	}
-	return *asn, nil
-
-}
-
-func (s *Server) getGlobalConfig() (*bgpconfig.Global, error) {
-	asn, err := s.getNodeASN()
-	if err != nil {
-		return nil, err
-	}
-	return &bgpconfig.Global{
-		Config: bgpconfig.GlobalConfig{
-			As:       uint32(asn),
-			RouterId: s.ipv4.String(),
-		},
-	}, nil
-}
-
-func (s *Server) isMeshMode() (bool, error) {
-	return s.client.Config().GetNodeToNodeMesh()
-}
-
-// getMeshNeighborConfigs returns the list of mesh BGP neighbor configuration struct
-func (s *Server) getMeshNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
-	globalASN, err := s.getNodeASN()
-	if err != nil {
-		return nil, err
-	}
-	nodes, err := s.client.Nodes().List(calicoapi.NodeMetadata{})
-	if err != nil {
-		return nil, err
-	}
-	ns := make([]*bgpconfig.Neighbor, 0, len(nodes.Items))
-	for _, node := range nodes.Items {
-		if node.Metadata.Name == os.Getenv(NODENAME) {
-			continue
-		}
-		peerASN := globalASN
-		spec := node.Spec.BGP
-		if spec == nil {
-			continue
-		}
-
-		asn := spec.ASNumber
-		if asn != nil {
-			peerASN = *asn
-		}
-		if v4 := spec.IPv4Address; v4 != nil {
-			ip := v4.IP.String()
-			id := strings.Replace(ip, ".", "_", -1)
-			ns = append(ns, &bgpconfig.Neighbor{
-				Config: bgpconfig.NeighborConfig{
-					NeighborAddress: ip,
-					PeerAs:          uint32(peerASN),
-					Description:     fmt.Sprintf("Mesh_%s", id),
-				},
-			})
-		}
-		if v6 := spec.IPv6Address; v6 != nil {
-			ip := v6.IP.String()
-			id := strings.Replace(ip, ":", "_", -1)
-			ns = append(ns, &bgpconfig.Neighbor{
-				Config: bgpconfig.NeighborConfig{
-					NeighborAddress: ip,
-					PeerAs:          uint32(peerASN),
-					Description:     fmt.Sprintf("Mesh_%s", id),
-				},
-			})
-		}
-	}
-	return ns, nil
-
-}
-
-// getNeighborConfigFromPeer returns a BGP neighbor configuration struct from *etcd.Node
-func getNeighborConfigFromPeer(peer string, neighborType string) (*bgpconfig.Neighbor, error) {
-	m := &struct {
-		IP  string `json:"ip"`
-		ASN string `json:"as_num"`
-	}{}
-	if err := json.Unmarshal([]byte(peer), m); err != nil {
-		return nil, err
-	}
-	asn, err := numorstring.ASNumberFromString(m.ASN)
-	if err != nil {
-		return nil, err
-	}
-	return &bgpconfig.Neighbor{
-		Config: bgpconfig.NeighborConfig{
-			NeighborAddress: m.IP,
-			PeerAs:          uint32(asn),
-			Description:     fmt.Sprintf("%s_%s", strings.Title(neighborType), underscore(m.IP)),
-		},
-	}, nil
-}
-
-// getNonMeshNeighborConfigs returns the list of non-mesh BGP neighbor configuration struct
-// valid neighborType is either "global" or "node"
-func (s *Server) getNonMeshNeighborConfigs(neighborType string) ([]*bgpconfig.Neighbor, error) {
-	var metadata calicoapi.BGPPeerMetadata
-	switch neighborType {
-	case "global":
-		metadata.Scope = calicoscope.Global
-	case "node":
-		metadata.Scope = calicoscope.Node
-		metadata.Node = os.Getenv(NODENAME)
-	default:
-		return nil, fmt.Errorf("invalid neighbor type: %s", neighborType)
-	}
-	list, err := s.client.BGPPeers().List(metadata)
-	if err != nil {
-		return nil, err
-	}
-	ns := make([]*bgpconfig.Neighbor, 0, len(list.Items))
-	for _, node := range list.Items {
-		addr := node.Metadata.PeerIP.String()
-		ns = append(ns, &bgpconfig.Neighbor{
-			Config: bgpconfig.NeighborConfig{
-				NeighborAddress: addr,
-				PeerAs:          uint32(node.Spec.ASNumber),
-				Description:     fmt.Sprintf("%s_%s", strings.Title(neighborType), underscore(addr)),
-			},
-		})
-	}
-	return ns, nil
-}
-
-// getGlobalNeighborConfigs returns the list of global BGP neighbor configuration struct
-func (s *Server) getGlobalNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
-	return s.getNonMeshNeighborConfigs("global")
-}
-
-// getNodeNeighborConfigs returns the list of node specific BGP neighbor configuration struct
-func (s *Server) getNodeSpecificNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
-	return s.getNonMeshNeighborConfigs("node")
-}
-
-// getNeighborConfigs returns the complete list of BGP neighbor configuration
-// which the node should peer.
-func (s *Server) getNeighborConfigs() ([]*bgpconfig.Neighbor, error) {
-	var neighbors []*bgpconfig.Neighbor
-	// --- Node-to-node mesh ---
-	if mesh, err := s.isMeshMode(); err == nil && mesh {
-		ns, err := s.getMeshNeighborConfigs()
+	asn, ok := values[fmt.Sprintf("%s/%s/as_num", AllNodes, s.NodeName)]
+	if ok == false {
+		key := fmt.Sprintf("%s/global/as_num", AllNodes)
+		values, err := s.GetValues(cache, []string{key})
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
-		neighbors = append(neighbors, ns...)
-	} else if err != nil {
-		return nil, err
+		asn, ok = values[key]
+		if ok == false {
+			asn = DefaultASN
+		}
 	}
-	// --- Global peers ---
-	if ns, err := s.getGlobalNeighborConfigs(); err != nil {
-		return nil, err
-	} else {
-		neighbors = append(neighbors, ns...)
-	}
-	// --- Node-specific peers ---
-	if ns, err := s.getNodeSpecificNeighborConfigs(); err != nil {
-		return nil, err
-	} else {
-		neighbors = append(neighbors, ns...)
-	}
-	return neighbors, nil
+	return numorstring.ASNumberFromString(asn)
 }
 
-func etcdKeyToPrefix(key string) string {
-	path := strings.Split(key, "/")
-	return strings.Replace(path[len(path)-1], "-", "/", 1)
+func (s *Server) getBGPDGlobalConfig() (*svbgpconfig.Global, error) {
+	asn, err := s.GetNodeASN(nil)
+	if err != nil {
+		return nil, err
+	}
+	return &svbgpconfig.Global{
+		Config: svbgpconfig.GlobalConfig{
+			As:       uint32(asn),
+			RouterId: s.ipv4,
+		},
+	}, nil
 }
 
-func (s *Server) makePath(prefix string, isWithdrawal bool) (*bgptable.Path, error) {
+func (s *Server) MakePath(prefix string, isWithdrawal bool) (*bgptable.Path, error) {
 	_, ipNet, err := net.ParseCIDR(prefix)
 	if err != nil {
 		return nil, err
@@ -568,288 +512,21 @@ func (s *Server) makePath(prefix string, isWithdrawal bool) (*bgptable.Path, err
 		v4 = false
 	}
 
-	var nlri bgp.AddrPrefixInterface
-	attrs := []bgp.PathAttributeInterface{
-		bgp.NewPathAttributeOrigin(0),
+	var nlri svbgp.AddrPrefixInterface
+	attrs := []svbgp.PathAttributeInterface{
+		svbgp.NewPathAttributeOrigin(0),
 	}
 
 	if v4 {
-		nlri = bgp.NewIPAddrPrefix(uint8(masklen), p.String())
-		attrs = append(attrs, bgp.NewPathAttributeNextHop(s.ipv4.String()))
+		nlri = svbgp.NewIPAddrPrefix(uint8(masklen), p.String())
+		attrs = append(attrs, svbgp.NewPathAttributeNextHop(s.ipv4))
 	} else {
-		nlri = bgp.NewIPv6AddrPrefix(uint8(masklen), p.String())
-		attrs = append(attrs, bgp.NewPathAttributeMpReachNLRI(s.ipv6.String(), []bgp.AddrPrefixInterface{nlri}))
+		nlri = svbgp.NewIPv6AddrPrefix(uint8(masklen), p.String())
+		attrs = append(attrs, svbgp.NewPathAttributeMpReachNLRI(s.ipv6, []svbgp.AddrPrefixInterface{nlri}))
 	}
+	log.Debugf("path isWithdrawal=%t attrs=%#v", isWithdrawal, attrs)
 
 	return bgptable.NewPath(nil, nlri, isWithdrawal, attrs, time.Now(), false), nil
-}
-
-// getAssignedPrefixes retrives prefixes assigned to the node and returns them as a
-// list of BGP path.
-// using etcd directly since libcalico-go doesn't seem to have a method to return
-// assigned prefixes yet.
-func (s *Server) getAssignedPrefixes(api etcd.KeysAPI) ([]*bgptable.Path, uint64, error) {
-	var ps []*bgptable.Path
-	var index uint64
-	f := func(version string) error {
-		res, err := api.Get(context.Background(), fmt.Sprintf("%s/%s/%s/block", CALICO_AGGR, os.Getenv(NODENAME), version), &etcd.GetOptions{Recursive: true})
-		if err != nil {
-			return err
-		}
-		if index == 0 {
-			index = res.Index
-		}
-		for _, v := range res.Node.Nodes {
-			path, err := s.makePath(etcdKeyToPrefix(v.Key), false)
-			if err != nil {
-				return err
-			}
-			ps = append(ps, path)
-		}
-		return nil
-	}
-	if s.ipv4 != nil {
-		if err := f("ipv4"); err != nil {
-			return nil, 0, err
-		}
-	}
-	if s.ipv6 != nil {
-		if err := f("ipv6"); err != nil {
-			return nil, 0, err
-		}
-	}
-	return ps, index, nil
-}
-
-// watchPrefix watches etcd /calico/ipam/v2/host/$NODENAME and add/delete
-// aggregated routes which are assigned to the node.
-// This function also updates policy appropriately.
-func (s *Server) watchPrefix() error {
-
-	paths, index, err := s.getAssignedPrefixes(s.etcd)
-	if err != nil {
-		return err
-	}
-
-	if err = s.updatePrefixSet(paths); err != nil {
-		return err
-	}
-
-	if _, err := s.bgpServer.AddPath("", paths); err != nil {
-		return err
-	}
-	s.prefixReady <- 1
-
-	watcher := s.etcd.Watcher(fmt.Sprintf("%s/%s", CALICO_AGGR, os.Getenv(NODENAME)), &etcd.WatcherOptions{Recursive: true, AfterIndex: index})
-	for {
-		var err error
-		res, err := watcher.Next(context.Background())
-		if err != nil {
-			return err
-		}
-		var path *bgptable.Path
-		key := etcdKeyToPrefix(res.Node.Key)
-		if res.Action == "delete" {
-			path, err = s.makePath(key, true)
-		} else {
-			path, err = s.makePath(key, false)
-		}
-		if err != nil {
-			return err
-		}
-		paths := []*bgptable.Path{path}
-		if err = s.updatePrefixSet(paths); err != nil {
-			return err
-		}
-		if _, err := s.bgpServer.AddPath("", paths); err != nil {
-			return err
-		}
-		log.Printf("add path: %s", path)
-	}
-}
-
-// watchBGPConfig watches etcd path /calico/bgp/v1 and handle various changes
-// in etcd. Though this method tries to minimize effects to the existing BGP peers,
-// when /calico/bgp/v1/host/$NODENAME or /calico/global/as_num is changed,
-// give up handling the change and return error (this leads calico-bgp-daemon to be restarted)
-func (s *Server) watchBGPConfig() error {
-	var index uint64
-	res, err := s.etcd.Get(context.Background(), CALICO_BGP, nil)
-	if err != nil {
-		return err
-	}
-	index = res.Index
-
-	neighborConfigs, err := s.getNeighborConfigs()
-	if err != nil {
-		return err
-	}
-
-	for _, n := range neighborConfigs {
-		if err = s.bgpServer.AddNeighbor(n); err != nil {
-			return err
-		}
-	}
-
-	watcher := s.etcd.Watcher(CALICO_BGP, &etcd.WatcherOptions{Recursive: true, AfterIndex: index})
-	for {
-		res, err := watcher.Next(context.Background())
-		if err != nil {
-			return err
-		}
-		prev := ""
-		if res.PrevNode != nil {
-			prev = res.PrevNode.Value
-		}
-		log.Printf("watch: action: %s, key: %s node: %s, prev-node: %s", res.Action, res.Node.Key, res.Node.Value, prev)
-		if res.Action == "set" && res.Node.Value == prev {
-			log.Printf("same value. ignore")
-			continue
-		}
-
-		handleNonMeshNeighbor := func(neighborType string) error {
-			switch res.Action {
-			case "delete":
-				n, err := getNeighborConfigFromPeer(res.PrevNode.Value, neighborType)
-				if err != nil {
-					return err
-				}
-				return s.bgpServer.DeleteNeighbor(n)
-			case "set", "create", "update", "compareAndSwap":
-				n, err := getNeighborConfigFromPeer(res.Node.Value, neighborType)
-				if err != nil {
-					return err
-				}
-				return s.bgpServer.AddNeighbor(n)
-			}
-			log.Printf("unhandled action: %s", res.Action)
-			return nil
-		}
-
-		key := res.Node.Key
-		switch {
-		case strings.HasPrefix(key, fmt.Sprintf("%s/global/peer_", CALICO_BGP)):
-			err = handleNonMeshNeighbor("global")
-		case strings.HasPrefix(key, fmt.Sprintf("%s/host/%s/peer_", CALICO_BGP, os.Getenv(NODENAME))):
-			err = handleNonMeshNeighbor("node")
-		case strings.HasPrefix(key, fmt.Sprintf("%s/host/%s", CALICO_BGP, os.Getenv(NODENAME))):
-			log.Println("Local host config update. Restart")
-			os.Exit(1)
-		case strings.HasPrefix(key, fmt.Sprintf("%s/host", CALICO_BGP)):
-			elems := strings.Split(key, "/")
-			if len(elems) < 4 {
-				log.Printf("unhandled key: %s", key)
-				continue
-			}
-			deleteNeighbor := func(node *etcd.Node) error {
-				if node.Value == "" {
-					return nil
-				}
-				n := &bgpconfig.Neighbor{
-					Config: bgpconfig.NeighborConfig{
-						NeighborAddress: node.Value,
-					},
-				}
-				return s.bgpServer.DeleteNeighbor(n)
-			}
-			host := elems[len(elems)-2]
-			switch elems[len(elems)-1] {
-			case "ip_addr_v4", "ip_addr_v6":
-				switch res.Action {
-				case "delete":
-					if err = deleteNeighbor(res.PrevNode); err != nil {
-						return err
-					}
-				case "set":
-					if res.PrevNode != nil {
-						if err = deleteNeighbor(res.PrevNode); err != nil {
-							return err
-						}
-					}
-					if res.Node.Value == "" {
-						continue
-					}
-					asn, err := s.getPeerASN(host)
-					if err != nil {
-						return err
-					}
-					n := &bgpconfig.Neighbor{
-						Config: bgpconfig.NeighborConfig{
-							NeighborAddress: res.Node.Value,
-							PeerAs:          uint32(asn),
-							Description:     fmt.Sprintf("Mesh_%s", underscore(res.Node.Value)),
-						},
-					}
-					if err = s.bgpServer.AddNeighbor(n); err != nil {
-						return err
-					}
-				}
-			case "as_num":
-				var asn numorstring.ASNumber
-				if res.Action == "set" {
-					asn, err = numorstring.ASNumberFromString(res.Node.Value)
-					if err != nil {
-						return err
-					}
-				} else {
-					asn, err = s.getNodeASN()
-					if err != nil {
-						return err
-					}
-				}
-				for _, version := range []string{"v4", "v6"} {
-					res, err := s.etcd.Get(context.Background(), fmt.Sprintf("%s/host/%s/ip_addr_%s", CALICO_BGP, host, version), nil)
-					if errorButKeyNotFound(err) != nil {
-						return err
-					}
-					if res == nil {
-						continue
-					}
-					if err = deleteNeighbor(res.Node); err != nil {
-						return err
-					}
-					ip := res.Node.Value
-					n := &bgpconfig.Neighbor{
-						Config: bgpconfig.NeighborConfig{
-							NeighborAddress: ip,
-							PeerAs:          uint32(asn),
-							Description:     fmt.Sprintf("Mesh_%s", underscore(ip)),
-						},
-					}
-					if err = s.bgpServer.AddNeighbor(n); err != nil {
-						return err
-					}
-				}
-			default:
-				log.Printf("unhandled key: %s", key)
-			}
-		case strings.HasPrefix(key, fmt.Sprintf("%s/global/as_num", CALICO_BGP)):
-			log.Println("Global AS number update. Restart")
-			os.Exit(1)
-		case strings.HasPrefix(key, fmt.Sprintf("%s/global/node_mesh", CALICO_BGP)):
-			mesh, err := s.isMeshMode()
-			if err != nil {
-				return err
-			}
-			ns, err := s.getMeshNeighborConfigs()
-			if err != nil {
-				return err
-			}
-			for _, n := range ns {
-				if mesh {
-					err = s.bgpServer.AddNeighbor(n)
-				} else {
-					err = s.bgpServer.DeleteNeighbor(n)
-				}
-				if err != nil {
-					return err
-				}
-			}
-		}
-		if err != nil {
-			return err
-		}
-	}
 }
 
 // watchKernelRoute receives netlink route update notification and announces
@@ -870,7 +547,7 @@ func (s *Server) watchKernelRoute() error {
 		if update.Table == syscall.RT_TABLE_MAIN && (update.Protocol == syscall.RTPROT_KERNEL || update.Protocol == syscall.RTPROT_BOOT) {
 			// TODO: handle ipPool deletion. RTM_DELROUTE message
 			// can belong to previously valid ipPool.
-			if s.ipam.match(update.Dst.String()) == nil {
+			if s.ipam.Match(update.Dst.String()) == nil {
 				continue
 			}
 			isWithdrawal := false
@@ -882,12 +559,12 @@ func (s *Server) watchKernelRoute() error {
 				log.Printf("unhandled rtm type: %d", update.Type)
 				continue
 			}
-			path, err := s.makePath(update.Dst.String(), isWithdrawal)
+			path, err := s.MakePath(update.Dst.String(), isWithdrawal)
 			if err != nil {
 				return err
 			}
 			log.Printf("made path from kernel update: %s", path)
-			if _, err = s.bgpServer.AddPath("", []*bgptable.Path{path}); err != nil {
+			if _, err = s.BgpServer.AddPath("", []*bgptable.Path{path}); err != nil {
 				return err
 			}
 		} else if update.Table == syscall.RT_TABLE_LOCAL {
@@ -895,11 +572,11 @@ func (s *Server) watchKernelRoute() error {
 			// Some routes we injected may be deleted by the kernel
 			// Reload routes from BGP RIB and inject again
 			ip, _, _ := net.ParseCIDR(update.Dst.String())
-			family := bgp.RF_IPv4_UC
+			family := svbgp.RF_IPv4_UC
 			if ip.To4() == nil {
-				family = bgp.RF_IPv6_UC
+				family = svbgp.RF_IPv6_UC
 			}
-			tbl, err := s.bgpServer.GetRib("", family, nil)
+			tbl, err := s.BgpServer.GetRib("", family, nil)
 			if err != nil {
 				return err
 			}
@@ -910,7 +587,6 @@ func (s *Server) watchKernelRoute() error {
 }
 
 func (s *Server) loadKernelRoute() error {
-	<-s.prefixReady
 	filter := &netlink.Route{
 		Table: syscall.RT_TABLE_MAIN,
 	}
@@ -922,16 +598,16 @@ func (s *Server) loadKernelRoute() error {
 		if route.Dst == nil {
 			continue
 		}
-		if s.ipam.match(route.Dst.String()) == nil {
+		if s.ipam.Match(route.Dst.String()) == nil {
 			continue
 		}
 		if route.Protocol == syscall.RTPROT_KERNEL || route.Protocol == syscall.RTPROT_BOOT {
-			path, err := s.makePath(route.Dst.String(), false)
+			path, err := s.MakePath(route.Dst.String(), false)
 			if err != nil {
 				return err
 			}
 			log.Printf("made path from kernel route: %s", path)
-			if _, err = s.bgpServer.AddPath("", []*bgptable.Path{path}); err != nil {
+			if _, err = s.BgpServer.AddPath("", []*bgptable.Path{path}); err != nil {
 				return err
 			}
 		}
@@ -953,15 +629,19 @@ func (s *Server) injectRoute(path *bgptable.Path) error {
 
 	ipip := false
 	if dst.IP.To4() != nil {
-		if p := s.ipam.match(nlri.String()); p != nil {
+		if p := s.ipam.Match(nlri.String()); p != nil {
 			ipip = p.IPIP != ""
 
-			node, err := s.client.Nodes().Get(calicoapi.NodeMetadata{Name: os.Getenv(NODENAME)})
+			values, err := s.GetNode(nil, s.NodeName)
 			if err != nil {
 				return err
 			}
+			ipv4, ok := values[fmt.Sprintf("%s/%s/%s", AllNodes, s.NodeName, KeyIPV4NW)]
+			if ok == false || ipv4 == "" {
+				return errors.New("ip address not found")
+			}
 
-			if p.Mode == "cross-subnet" && !isCrossSubnet(route.Gw, node.Spec.BGP.IPv4Address.Network().IPNet) {
+			if p.Mode == "cross-subnet" && !isCrossSubnet(route.Gw, ipv4) {
 				ipip = false
 			}
 			if ipip {
@@ -995,7 +675,7 @@ func (s *Server) injectRoute(path *bgptable.Path) error {
 // linux kernel
 // TODO: multipath support
 func (s *Server) watchBGPPath() error {
-	watcher := s.bgpServer.Watch(bgpserver.WatchBestPath(false))
+	watcher := s.BgpServer.Watch(bgpserver.WatchBestPath(false))
 	for {
 		var paths []*bgptable.Path
 		select {
@@ -1024,11 +704,11 @@ func (s *Server) watchBGPPath() error {
 // and not allowed when it matches with 'host' set.
 func (s *Server) initialPolicySetting() error {
 	createEmptyPrefixSet := func(name string) error {
-		ps, err := bgptable.NewPrefixSet(bgpconfig.PrefixSet{PrefixSetName: name})
+		ps, err := bgptable.NewPrefixSet(svbgpconfig.PrefixSet{PrefixSetName: name})
 		if err != nil {
 			return err
 		}
-		return s.bgpServer.AddDefinedSet(ps)
+		return s.BgpServer.AddDefinedSet(ps)
 	}
 	for _, name := range []string{aggregatedPrefixSetName, hostPrefixSetName} {
 		if err := createEmptyPrefixSet(name); err != nil {
@@ -1036,27 +716,27 @@ func (s *Server) initialPolicySetting() error {
 		}
 	}
 	// intended to work as same as 'calico_pools' export filter of BIRD configuration
-	definition := bgpconfig.PolicyDefinition{
+	definition := svbgpconfig.PolicyDefinition{
 		Name: "calico_aggr",
-		Statements: []bgpconfig.Statement{
-			bgpconfig.Statement{
-				Conditions: bgpconfig.Conditions{
-					MatchPrefixSet: bgpconfig.MatchPrefixSet{
+		Statements: []svbgpconfig.Statement{
+			svbgpconfig.Statement{
+				Conditions: svbgpconfig.Conditions{
+					MatchPrefixSet: svbgpconfig.MatchPrefixSet{
 						PrefixSet: aggregatedPrefixSetName,
 					},
 				},
-				Actions: bgpconfig.Actions{
-					RouteDisposition: bgpconfig.ROUTE_DISPOSITION_ACCEPT_ROUTE,
+				Actions: svbgpconfig.Actions{
+					RouteDisposition: svbgpconfig.ROUTE_DISPOSITION_ACCEPT_ROUTE,
 				},
 			},
-			bgpconfig.Statement{
-				Conditions: bgpconfig.Conditions{
-					MatchPrefixSet: bgpconfig.MatchPrefixSet{
+			svbgpconfig.Statement{
+				Conditions: svbgpconfig.Conditions{
+					MatchPrefixSet: svbgpconfig.MatchPrefixSet{
 						PrefixSet: hostPrefixSetName,
 					},
 				},
-				Actions: bgpconfig.Actions{
-					RouteDisposition: bgpconfig.ROUTE_DISPOSITION_REJECT_ROUTE,
+				Actions: svbgpconfig.Actions{
+					RouteDisposition: svbgpconfig.ROUTE_DISPOSITION_REJECT_ROUTE,
 				},
 			},
 		},
@@ -1065,15 +745,15 @@ func (s *Server) initialPolicySetting() error {
 	if err != nil {
 		return err
 	}
-	if err = s.bgpServer.AddPolicy(policy, false); err != nil {
+	if err = s.BgpServer.AddPolicy(policy, false); err != nil {
 		return err
 	}
-	return s.bgpServer.AddPolicyAssignment("", bgptable.POLICY_DIRECTION_EXPORT,
-		[]*bgpconfig.PolicyDefinition{&definition},
+	return s.BgpServer.AddPolicyAssignment("", bgptable.POLICY_DIRECTION_EXPORT,
+		[]*svbgpconfig.PolicyDefinition{&definition},
 		bgptable.ROUTE_TYPE_ACCEPT)
 }
 
-func (s *Server) updatePrefixSet(paths []*bgptable.Path) error {
+func (s *Server) UpdatePrefixSet(paths []*bgptable.Path) error {
 	for _, path := range paths {
 		err := s._updatePrefixSet(path.GetNlri().String(), path.IsWithdraw)
 		if err != nil {
@@ -1096,10 +776,10 @@ func (s *Server) _updatePrefixSet(prefix string, del bool) error {
 	if err != nil {
 		return err
 	}
-	ps, err := bgptable.NewPrefixSet(bgpconfig.PrefixSet{
+	ps, err := bgptable.NewPrefixSet(svbgpconfig.PrefixSet{
 		PrefixSetName: aggregatedPrefixSetName,
-		PrefixList: []bgpconfig.Prefix{
-			bgpconfig.Prefix{
+		PrefixList: []svbgpconfig.Prefix{
+			svbgpconfig.Prefix{
 				IpPrefix: prefix,
 			},
 		},
@@ -1108,9 +788,9 @@ func (s *Server) _updatePrefixSet(prefix string, del bool) error {
 		return err
 	}
 	if del {
-		err = s.bgpServer.DeleteDefinedSet(ps, false)
+		err = s.BgpServer.DeleteDefinedSet(ps, false)
 	} else {
-		err = s.bgpServer.AddDefinedSet(ps)
+		err = s.BgpServer.AddDefinedSet(ps)
 	}
 	if err != nil {
 		return err
@@ -1120,10 +800,10 @@ func (s *Server) _updatePrefixSet(prefix string, del bool) error {
 	if ipNet.IP.To4() == nil {
 		max = 128
 	}
-	ps, err = bgptable.NewPrefixSet(bgpconfig.PrefixSet{
+	ps, err = bgptable.NewPrefixSet(svbgpconfig.PrefixSet{
 		PrefixSetName: hostPrefixSetName,
-		PrefixList: []bgpconfig.Prefix{
-			bgpconfig.Prefix{
+		PrefixList: []svbgpconfig.Prefix{
+			svbgpconfig.Prefix{
 				IpPrefix:        prefix,
 				MasklengthRange: fmt.Sprintf("%d..%d", min, max),
 			},
@@ -1133,9 +813,9 @@ func (s *Server) _updatePrefixSet(prefix string, del bool) error {
 		return err
 	}
 	if del {
-		return s.bgpServer.DeleteDefinedSet(ps, false)
+		return s.BgpServer.DeleteDefinedSet(ps, false)
 	}
-	return s.bgpServer.AddDefinedSet(ps)
+	return s.BgpServer.AddDefinedSet(ps)
 }
 
 func main() {
@@ -1171,6 +851,7 @@ func main() {
 		log.Printf("failed to create new server")
 		log.Fatal(err)
 	}
+	log.Debugf("server struct: %#v", server)
 
 	server.Serve()
 }

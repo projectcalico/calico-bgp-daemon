@@ -107,7 +107,7 @@ $(BIN)/calico-bgp-daemon: $(SRC_FILES) vendor $(BIN)/gobgp
 		$(CALICO_BUILD) sh -c '\
 			cd /go/src/$(PACKAGE_NAME) && \
 			go build -v -o $(BIN)/calico-bgp-daemon \
-            	-ldflags "-X main.VERSION=$(GOBGPD_VERSION) -s -w" main.go ipam.go k8s.go'
+		-ldflags "-X main.VERSION=$(GOBGPD_VERSION) -s -w" main.go aggr.go bgpconfig.go ipam.go client.go'
 
 ###############################################################################
 # Building the image
