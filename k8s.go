@@ -366,7 +366,7 @@ func (c *k8sClient) updateBGPConfig(action string, key string, bgpconfig map[str
 				}
 				n := &svbgpconfig.Neighbor{
 					Config: svbgpconfig.NeighborConfig{
-						NeighborAddress: value,
+						NeighborAddress: ip,
 						PeerAs:          uint32(asn),
 						Description:     fmt.Sprintf("Mesh_%s", underscore(value)),
 					},
