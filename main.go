@@ -138,6 +138,7 @@ func recursiveNexthopLookup(bgpNexthop net.IP) (net.IP, error) {
 }
 
 func cleanUpRoutes() error {
+	log.Println("Clean up injected routes")
 	filter := &netlink.Route{
 		Protocol: RTPROT_GOBGP,
 	}
@@ -352,6 +353,15 @@ func (s *Server) ipamUpdateHandler(pool *ipPool) error {
 				}
 				route.Gw = gw
 				route.Flags = 0
+				rs, err := netlink.RouteGet(gw)
+				if err != nil {
+					return err
+				}
+				if len(rs) == 0 {
+					return fmt.Errorf("no route for path: %s", gw)
+				}
+				r := rs[0]
+				route.LinkIndex = r.LinkIndex
 			}
 			return netlink.RouteReplace(&route)
 		}
