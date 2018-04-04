@@ -5,13 +5,15 @@
 ARCH?=amd64
 ifeq ($(ARCH),amd64)
         ARCHTAG?=
+        GO_BUILD_VER?=v0.10
 endif
 
 ifeq ($(ARCH),ppc64le)
         ARCHTAG:=-ppc64le
+        GO_BUILD_VER?=latest
 endif
 
-CALICO_BUILD?=calico/go-build$(ARCHTAG)
+CALICO_BUILD?=calico/go-build$(ARCHTAG):$(GO_BUILD_VER)
 SRC_FILES=$(shell find . -type f -name '*.go')
 GOBGPD_VERSION?=$(shell git describe --tags --dirty)
 CONTAINER_NAME?=calico/gobgpd$(ARCHTAG)
