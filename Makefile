@@ -41,12 +41,7 @@ $(DIST)/gobgp:
 	docker run --rm -v $(CURDIR)/$(DIST):/go/bin \
 	-e LOCAL_USER_ID=$(LOCAL_USER_ID) \
 	-e ARCH=$(ARCH) \
-	$(CALICO_BUILD) sh -c '\
-		go get -u github.com/golang/dep/cmd/dep && \
-		go get github.com/osrg/gobgp || \
-		cd /go/src/github.com/osrg/gobgp && dep ensure && \
-		go get -v github.com/osrg/gobgp/gobgp'
-	rm -f $(DIST)/dep
+	$(CALICO_BUILD) go get -v github.com/osrg/gobgp/gobgp
 
 $(DIST)/calico-bgp-daemon: $(SRC_FILES) vendor
 	mkdir -p $(@D)
