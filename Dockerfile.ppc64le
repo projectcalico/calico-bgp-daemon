@@ -1,4 +1,4 @@
-FROM ppc64le/alpine:3.6
+FROM ppc64le/alpine:3.7
 
 MAINTAINER Gunjan Patel <gunjan@tigera.io>
 
