@@ -41,7 +41,22 @@ PACKAGE_NAME?=github.com/projectcalico/calico-bgp-daemon
 LOCAL_USER_ID?=$(shell id -u $$USER)
 DIST=dist/$(ARCH)
 
-.PHONY: all image image-all build binary build-containerized
+.PHONY: all image image-all build binary build-containerized ci cd
+
+## Builds the code and runs all tests.
+ci: image
+
+## Deploys images to registry
+cd:
+ifndef CONFIRM
+	$(error CONFIRM is undefined - run using make <target> CONFIRM=true)
+endif
+ifndef BRANCH_NAME
+	$(error BRANCH_NAME is undefined - run using make <target> BRANCH_NAME=var or set an environment variable)
+endif
+	$(MAKE) tag-images push IMAGETAG=${BRANCH_NAME}
+	$(MAKE) tag-images push IMAGETAG=$(shell git describe --tags --dirty --always --long)
+
 
 # Use this to populate the vendor directory after checking out the repository.
 # To update upstream dependencies, delete the glide.lock file first.
