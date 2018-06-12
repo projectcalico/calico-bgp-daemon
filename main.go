@@ -157,16 +157,16 @@ func cleanUpRoutes() error {
 }
 
 type Server struct {
-	t         tomb.Tomb
-	bgpServer *bgpserver.BgpServer
-	datastore calicoapi.DatastoreType
-	client    *calicocli.Client
-	etcd      etcd.KeysAPI
-	process   *IntervalProcessor
-	ipv4      net.IP
-	ipv6      net.IP
-	ipam      IpamCache
-	reloadCh  chan []*bgptable.Path
+	t           tomb.Tomb
+	bgpServer   *bgpserver.BgpServer
+	datastore   calicoapi.DatastoreType
+	client      *calicocli.Client
+	etcd        etcd.KeysAPI
+	process     *IntervalProcessor
+	ipv4        net.IP
+	ipv6        net.IP
+	ipam        IpamCache
+	reloadCh    chan []*bgptable.Path
 	prefixReady chan int
 }
 
@@ -201,12 +201,12 @@ func NewServer() (*Server, error) {
 
 	datastoreType := config.Spec.DatastoreType
 	server := Server{
-		bgpServer: bgpServer,
-		datastore: datastoreType,
-		client:    calicoCli,
-		ipv4:      ipv4,
-		ipv6:      ipv6,
-		reloadCh:  make(chan []*bgptable.Path),
+		bgpServer:   bgpServer,
+		datastore:   datastoreType,
+		client:      calicoCli,
+		ipv4:        ipv4,
+		ipv6:        ipv6,
+		reloadCh:    make(chan []*bgptable.Path),
 		prefixReady: make(chan int),
 	}
 
@@ -925,7 +925,7 @@ func (s *Server) loadKernelRoute() error {
 		if s.ipam.match(route.Dst.String()) == nil {
 			continue
 		}
-		if (route.Protocol == syscall.RTPROT_KERNEL || route.Protocol == syscall.RTPROT_BOOT) {
+		if route.Protocol == syscall.RTPROT_KERNEL || route.Protocol == syscall.RTPROT_BOOT {
 			path, err := s.makePath(route.Dst.String(), false)
 			if err != nil {
 				return err
