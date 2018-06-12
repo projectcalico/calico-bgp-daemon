@@ -1,4 +1,5 @@
-dist/
+bin/
+.go-pkg-cache/
 .idea/
 .editorconfig
 vendor/

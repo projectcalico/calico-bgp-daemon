@@ -2,7 +2,7 @@ FROM s390x/alpine:3.7
 
 MAINTAINER Gunjan Patel <gunjan@tigera.io>
 
-ADD dist/s390x/gobgp /gobgp
-ADD dist/s390x/calico-bgp-daemon /calico-bgp-daemon
+ADD bin/s390x/gobgp /gobgp
+ADD bin/s390x/calico-bgp-daemon /calico-bgp-daemon
 
 ENTRYPOINT ["/calico-bgp-daemon"]

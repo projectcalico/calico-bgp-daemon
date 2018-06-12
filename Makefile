@@ -1,9 +1,17 @@
+# Shortcut targets
+default: build
+
+## Build binary for current platform
+all: build
+
+## Run the tests for the current platform/architecture
+test: ut test-install-cni
 ###############################################################################
 # Both native and cross architecture builds are supported.
 # The target architecture is select by setting the ARCH variable.
 # When ARCH is undefined it is set to the detected host architecture.
 # When ARCH differs from the host architecture a crossbuild will be performed.
-ARCHES=amd64 arm64 ppc64le s390x
+ARCHES=$(patsubst Dockerfile.%,%,$(wildcard Dockerfile.*))
 
 # BUILDARCH is the host architecture
 # ARCH is the target architecture
@@ -28,39 +36,31 @@ endif
 ifeq ($(ARCH),x86_64)
     override ARCH=amd64
 endif
-
-GO_BUILD_VER ?= v0.15
-
-
+###############################################################################
+GO_BUILD_VER ?= v0.16
 
 CALICO_BUILD?=calico/go-build:$(GO_BUILD_VER)
-SRC_FILES=$(shell find . -type f -name '*.go')
+SRC_FILES=$(shell find . -type f -name '*.go' -not -path "./vendor/*" -not -path "./gobgp/*")
 GOBGPD_VERSION?=$(shell git describe --tags --dirty)
 CONTAINER_NAME?=calico/gobgpd
 PACKAGE_NAME?=github.com/projectcalico/calico-bgp-daemon
 LOCAL_USER_ID?=$(shell id -u $$USER)
-DIST=dist/$(ARCH)
+BIN=bin/$(ARCH)
 
-.PHONY: all image image-all build binary build-containerized ci cd
+clean:
+	rm -rf vendor
+	rm -rf gobgp
+	rm -rf $(BIN)
 
-## Builds the code and runs all tests.
-ci: image
+###############################################################################
+# Building the binary
+###############################################################################
+build: $(BIN)/calico-bgp-daemon
+build-all: $(addprefix sub-build-,$(ARCHES))
+sub-build-%:
+	$(MAKE) build ARCH=$*
 
-## Deploys images to registry
-cd:
-ifndef CONFIRM
-	$(error CONFIRM is undefined - run using make <target> CONFIRM=true)
-endif
-ifndef BRANCH_NAME
-	$(error BRANCH_NAME is undefined - run using make <target> BRANCH_NAME=var or set an environment variable)
-endif
-	$(MAKE) tag-images push IMAGETAG=${BRANCH_NAME}
-	$(MAKE) tag-images push IMAGETAG=$(shell git describe --tags --dirty --always --long)
-
-
-# Use this to populate the vendor directory after checking out the repository.
-# To update upstream dependencies, delete the glide.lock file first.
-vendor: glide.yaml
+vendor: glide.lock
 	mkdir -p $(HOME)/.glide
 	# To build without Docker just run "glide install -strip-vendor"
 	docker run --rm \
@@ -71,19 +71,11 @@ vendor: glide.yaml
 		  cd /go/src/$(PACKAGE_NAME) && \
       glide install -strip-vendor'
 
-.PHONY: build-all
-build-all: $(addprefix sub-build-,$(ARCHES))
-sub-build-%:
-	$(MAKE) build ARCH=$*
-
-build: build-containerized
-binary: $(DIST)/calico-bgp-daemon
-
 # instead of 'go get', run `git clone` and then `dep ensure && go build` so the files are cached
 gobgp:
 	git clone https://github.com/osrg/gobgp gobgp
 
-gobgp/vendor:
+gobgp/vendor: gobgp
 	docker run --rm \
 		-v $(CURDIR)/gobgp:/go/src/github.com/osrg/gobgp \
 		-w /go/src/github.com/osrg/gobgp \
@@ -92,46 +84,41 @@ gobgp/vendor:
 		-e GOARCH=$(ARCH) \
 		$(CALICO_BUILD) dep ensure
 
-$(DIST)/gobgp: gobgp gobgp/vendor
+$(BIN)/gobgp: gobgp gobgp/vendor
 	mkdir -p $(@D)
 	docker run --rm \
 		-v $(CURDIR)/gobgp:/go/src/github.com/osrg/gobgp \
-		-v $(CURDIR)/$(DIST):/outbin \
+		-v $(CURDIR)/$(BIN):/outbin \
 		-w /go/src/github.com/osrg/gobgp \
 		-e LOCAL_USER_ID=$(LOCAL_USER_ID) \
 		-e ARCH=$(ARCH) \
 		-e GOARCH=$(ARCH) \
 		$(CALICO_BUILD) go build -v -o /outbin/gobgp github.com/osrg/gobgp/gobgp
 
-$(DIST)/calico-bgp-daemon: $(SRC_FILES) vendor
-	mkdir -p $(@D)
-	GOARCH=$(ARCH) go build -v -o $(DIST)/calico-bgp-daemon \
-	-ldflags "-X main.VERSION=$(GOBGPD_VERSION) -s -w" main.go ipam.go k8s.go
-
-build-containerized: vendor $(DIST)/gobgp
-	mkdir -p $(DIST)
+$(BIN)/calico-bgp-daemon: $(SRC_FILES) vendor $(BIN)/gobgp
+	-mkdir -p $(@D)
+	-mkdir -p .go-pkg-cache
 	docker run --rm \
 	-v $(CURDIR):/go/src/$(PACKAGE_NAME) \
-	-v $(CURDIR)/$(DIST):/go/src/$(PACKAGE_NAME)/$(DIST) \
 	-e LOCAL_USER_ID=$(LOCAL_USER_ID) \
-	-e ARCH=$(ARCH) \
+	-v $(CURDIR)/.go-pkg-cache:/go-cache/:rw \
+	-e GOCACHE=/go-cache \
+	-e GOARCH=$(ARCH) \
 		$(CALICO_BUILD) sh -c '\
 			cd /go/src/$(PACKAGE_NAME) && \
-			make binary'
+			go build -v -o $(BIN)/calico-bgp-daemon \
+            	-ldflags "-X main.VERSION=$(GOBGPD_VERSION) -s -w" main.go ipam.go k8s.go'
 
+###############################################################################
+# Building the image
+###############################################################################
 image-all: $(addprefix sub-image-,$(ARCHES))
 sub-image-%:
 	$(MAKE) image ARCH=$*
 
-
 image: $(CONTAINER_NAME)
-$(CONTAINER_NAME): build-containerized
+$(CONTAINER_NAME): build
 	docker build -t $(CONTAINER_NAME):latest-$(ARCH) -f Dockerfile.$(ARCH) .
-
-
-###############################################################################
-# tag and push images of any tag
-###############################################################################
 
 # ensure we have a real imagetag
 imagetag:
@@ -166,11 +153,45 @@ tag-images-all: imagetag $(addprefix sub-tag-images-,$(ARCHES))
 sub-tag-images-%:
 	$(MAKE) tag-images ARCH=$* IMAGETAG=$(IMAGETAG)
 
+###############################################################################
+# Static checks
+###############################################################################
+.PHONY: static-checks
+## Perform static checks on the code.
+static-checks: vendor
+	docker run --rm \
+		-e LOCAL_USER_ID=$(LOCAL_USER_ID) \
+		-v $(CURDIR):/go/src/$(PACKAGE_NAME) \
+		$(CALICO_BUILD) sh -c '\
+			cd  /go/src/$(PACKAGE_NAME) && \
+			gometalinter --deadline=300s --disable-all --enable=goimports --vendor -s gobgp ./...'
+
+.PHONY: fix
+## Fix static checks
+fix:
+	goimports -w $(SRC_FILES)
 
 ###############################################################################
-# cut versioned releases
+# CI
 ###############################################################################
+.PHONY: ci
+## Run what CI runs
+ci: static-checks
 
+## Deploys images to registry
+cd: image
+ifndef CONFIRM
+	$(error CONFIRM is undefined - run using make <target> CONFIRM=true)
+endif
+ifndef BRANCH_NAME
+	$(error BRANCH_NAME is undefined - run using make <target> BRANCH_NAME=var or set an environment variable)
+endif
+	$(MAKE) tag-images push IMAGETAG=${BRANCH_NAME}
+	$(MAKE) tag-images push IMAGETAG=$(shell git describe --tags --dirty --always --long)
+
+###############################################################################
+# Release
+###############################################################################
 release: clean
 ifndef VERSION
 	$(error VERSION is undefined - run using make release VERSION=vX.Y.Z)
@@ -187,10 +208,5 @@ endif
 	$(MAKE) push IMAGETAG=$(VERSION) ARCH=$(ARCH)
 	$(MAKE) push IMAGETAG=latest ARCH=$(ARCH)
 
-	@echo "Now create a release on Github and attach the $(DIST)/gobgpd and $(DIST)/gobgp binaries"
+	@echo "Now create a release on Github and attach the $(BIN)/gobgpd and $(BIN)/gobgp binaries"
 	@echo "git push origin $(VERSION)"
-
-clean:
-	rm -rf vendor
-	rm -rf gobgp
-	rm -rf $(DIST)

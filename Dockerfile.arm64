@@ -2,7 +2,7 @@ FROM arm64v8/alpine:3.7
 
 MAINTAINER Gunjan Patel <gunjan@tigera.io>
 
-ADD dist/arm64/gobgp /gobgp
-ADD dist/arm64/calico-bgp-daemon /calico-bgp-daemon
+ADD bin/arm64/gobgp /gobgp
+ADD bin/arm64/calico-bgp-daemon /calico-bgp-daemon
 
 ENTRYPOINT ["/calico-bgp-daemon"]
