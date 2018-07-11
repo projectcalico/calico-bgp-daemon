@@ -1,6 +1,6 @@
-FROM ppc64le/alpine:3.7
+FROM scratch
 
-MAINTAINER Gunjan Patel <gunjan@tigera.io>
+LABEL maintainer="tom@tigera.io"
 
 ADD bin/ppc64le/gobgp /gobgp
 ADD bin/ppc64le/calico-bgp-daemon /calico-bgp-daemon

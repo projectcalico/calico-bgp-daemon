@@ -1,6 +1,6 @@
-FROM s390x/alpine:3.7
+FROM scratch
 
-MAINTAINER Gunjan Patel <gunjan@tigera.io>
+LABEL maintainer="tom@tigera.io"
 
 ADD bin/s390x/gobgp /gobgp
 ADD bin/s390x/calico-bgp-daemon /calico-bgp-daemon
