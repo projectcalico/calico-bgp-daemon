@@ -668,6 +668,45 @@ func (s *Server) watchPrefix() error {
 	}
 }
 
+func (s *Server) AddNeighbor(n *bgpconfig.Neighbor) error {
+	n.GracefulRestart.Config.Enabled = true
+	n.GracefulRestart.Config.RestartTime = 120
+	n.GracefulRestart.Config.LongLivedEnabled = true
+	n.GracefulRestart.Config.NotificationEnabled = true
+	ipAddr, err := net.ResolveIPAddr("ip", n.Config.NeighborAddress)
+	var typ bgpconfig.AfiSafiType
+	if err == nil {
+		if ipAddr.IP.To4() == nil {
+			typ = bgpconfig.AFI_SAFI_TYPE_IPV6_UNICAST
+		} else {
+			typ = bgpconfig.AFI_SAFI_TYPE_IPV4_UNICAST
+		}
+	}
+
+	n.AfiSafis = []bgpconfig.AfiSafi{
+		bgpconfig.AfiSafi{
+			Config: bgpconfig.AfiSafiConfig{
+				AfiSafiName: typ,
+				Enabled:     true,
+			},
+			MpGracefulRestart: bgpconfig.MpGracefulRestart{
+				Config: bgpconfig.MpGracefulRestartConfig{
+					Enabled: true,
+				},
+			},
+			State: bgpconfig.AfiSafiState{
+				AfiSafiName: typ,
+			},
+		},
+	}
+	log.Printf("AddNeighbor neighbor=%#v", n)
+	log.Printf("AddNeighbor neighbor=%s", n)
+	if err := s.bgpServer.AddNeighbor(n); err != nil {
+		return err
+	}
+	return nil
+}
+
 // watchBGPConfig watches etcd path /calico/bgp/v1 and handle various changes
 // in etcd. Though this method tries to minimize effects to the existing BGP peers,
 // when /calico/bgp/v1/host/$NODENAME or /calico/global/as_num is changed,
@@ -686,7 +725,7 @@ func (s *Server) watchBGPConfig() error {
 	}
 
 	for _, n := range neighborConfigs {
-		if err = s.bgpServer.AddNeighbor(n); err != nil {
+		if err = s.AddNeighbor(n); err != nil {
 			return err
 		}
 	}
@@ -720,7 +759,7 @@ func (s *Server) watchBGPConfig() error {
 				if err != nil {
 					return err
 				}
-				return s.bgpServer.AddNeighbor(n)
+				return s.AddNeighbor(n)
 			}
 			log.Printf("unhandled action: %s", res.Action)
 			return nil
@@ -780,7 +819,7 @@ func (s *Server) watchBGPConfig() error {
 							Description:     fmt.Sprintf("Mesh_%s", underscore(res.Node.Value)),
 						},
 					}
-					if err = s.bgpServer.AddNeighbor(n); err != nil {
+					if err = s.AddNeighbor(n); err != nil {
 						return err
 					}
 				}
@@ -816,7 +855,7 @@ func (s *Server) watchBGPConfig() error {
 							Description:     fmt.Sprintf("Mesh_%s", underscore(ip)),
 						},
 					}
-					if err = s.bgpServer.AddNeighbor(n); err != nil {
+					if err = s.AddNeighbor(n); err != nil {
 						return err
 					}
 				}
@@ -837,7 +876,7 @@ func (s *Server) watchBGPConfig() error {
 			}
 			for _, n := range ns {
 				if mesh {
-					err = s.bgpServer.AddNeighbor(n)
+					err = s.AddNeighbor(n)
 				} else {
 					err = s.bgpServer.DeleteNeighbor(n)
 				}
