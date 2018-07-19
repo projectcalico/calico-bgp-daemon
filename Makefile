@@ -73,7 +73,7 @@ vendor: glide.lock
 
 # instead of 'go get', run `git clone` and then `dep ensure && go build` so the files are cached
 gobgp:
-	git clone https://github.com/osrg/gobgp gobgp
+	git clone -b v1.33 https://github.com/osrg/gobgp gobgp
 
 gobgp/vendor: gobgp
 	docker run --rm \
