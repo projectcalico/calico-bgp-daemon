@@ -118,15 +118,16 @@ func (p *IntervalProcessor) IntervalLoop() error {
 	if err := p.k8scli.initialNeighborConfigSetting(); err != nil {
 		return err
 	}
-	ippool, err := p.ipam.getIPPools()
-	if err != nil {
-		return err
-	}
-	p.ipam.lastIPPool = ippool
 	for {
 		log.Debug("polling")
-		p.ipam.sync()
-		p.k8scli.checkBGPConfig()
+		if err := p.ipam.sync(); err != nil {
+			log.Debugf("ipam sync err: %s", err)
+			return err
+		}
+		if err := p.k8scli.checkBGPConfig(); err != nil {
+			log.Debugf("bgpconfig err: %s", err)
+			return err
+		}
 		time.Sleep(time.Duration(p.interval) * time.Second)
 	}
 }
@@ -366,7 +367,7 @@ func (c *k8sClient) updateBGPConfig(action string, key string, bgpconfig map[str
 				}
 				n := &svbgpconfig.Neighbor{
 					Config: svbgpconfig.NeighborConfig{
-						NeighborAddress: value,
+						NeighborAddress: ip,
 						PeerAs:          uint32(asn),
 						Description:     fmt.Sprintf("Mesh_%s", underscore(value)),
 					},
